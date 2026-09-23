@@ -227,9 +227,10 @@ function isFixedTodayRow(x){return !!x?.fixed_goalkeeper_active&&x?.status!=='le
 function fixedTodayById(id,rows=S.sp){return !!rows.find(x=>x.player_id===id&&isFixedTodayRow(x))}
 function pri(){return S.sp.filter(x=>x.status==='waiting').sort((a,b)=>b.waiting_seconds-a.waiting_seconds||a.play_seconds-b.play_seconds||b.consecutive_waits-a.consecutive_waits||new Date(a.arrived_at)-new Date(b.arrived_at))}
 function transitionRole(playerId){
- if(!S.active||S.active.status!=='scheduled'||!S.prevMatch)return {label:'Escalado',kind:'neutral'};
- const winnerIds=new Set(S.prevMp.filter(x=>x.side===S.prevMatch.winner_side).map(x=>x.player_id));
- const loserIds=new Set(S.prevMp.filter(x=>x.side!==S.prevMatch.winner_side).map(x=>x.player_id));
+ if(!S.active||S.active.status!=='scheduled'||!S.prevMatch)return {label:fixedTodayById(playerId)?'🧤 Goleiro fixo':'Escalado',kind:fixedTodayById(playerId)?'fixed':'neutral'};
+ const winnerIds=new Set(S.prevMp.filter(x=>x.side===S.prevMatch.winner_side&&!x.exited_at).map(x=>x.player_id));
+ const loserIds=new Set(S.prevMp.filter(x=>x.side!==S.prevMatch.winner_side&&!x.exited_at).map(x=>x.player_id));
+ if(fixedTodayById(playerId)&&S.prevMp.some(x=>x.player_id===playerId&&!x.exited_at))return {label:'🧤 Goleiro fixo permanece',kind:'fixed'};
  if(winnerIds.has(playerId))return {label:'🏆 Vencedor permanece',kind:'winner'};
  if(loserIds.has(playerId))return {label:'♻️ Reaproveitado do derrotado',kind:'reuse'};
  return {label:'⏳ Entrou pela fila',kind:'queue'};
@@ -250,8 +251,16 @@ async function ensureGoalkeeperForSide(side){
 }
 async function assignScheduledGoalkeeper(side){
  if(!S.active||S.active.status!=='scheduled')return false;
- const team=sideP(side);
- const current=team.find(x=>x.is_goalkeeper);if(current)return true;
+ const team=sideP(side),current=team.find(x=>x.is_goalkeeper);
+ if(current)return true;
+ const fixed=team.find(x=>fixedTodayById(x.player_id));
+ if(fixed){
+   await sb.from('match_players').update({is_goalkeeper:false}).eq('match_id',S.active.id).eq('side',side);
+   await sb.from('match_players').update({is_goalkeeper:true}).eq('match_id',S.active.id).eq('player_id',fixed.player_id);
+   const sp=S.sp.find(x=>x.player_id===fixed.player_id);
+   if(sp)await sb.from('session_players').update({goalkeeper_turns:Number(sp.goalkeeper_turns||0)+1}).eq('id',sp.id);
+   await refresh(false);return true;
+ }
  const choices=team.filter(x=>x.players?.can_play_goalkeeper);
  if(!choices.length){alert(`Nenhum jogador do time ${side==='left'?'esquerdo':'direito'} está habilitado para ir ao gol. Ajuste a escalação antes de iniciar.`);return false}
  const pid=await choosePlayerAction('Definir goleiro',choices,`O time ${side==='left'?'esquerdo':'direito'} está sem goleiro. Apenas jogadores marcados como "pode ir ao gol" aparecem aqui.`);
@@ -260,7 +269,7 @@ async function assignScheduledGoalkeeper(side){
  const ok=await confirmAction('Confirmar goleiro?',`${p.players.name} ficará no gol neste time.`,'OK');if(!ok)return false;
  await sb.from('match_players').update({is_goalkeeper:false}).eq('match_id',S.active.id).eq('side',side);
  await sb.from('match_players').update({is_goalkeeper:true}).eq('match_id',S.active.id).eq('player_id',pid);
- const sp=S.sp.find(x=>x.player_id===pid);if(sp)await sb.from('session_players').update({goalkeeper_turns:sp.goalkeeper_turns+1}).eq('id',sp.id);
+ const sp=S.sp.find(x=>x.player_id===pid);if(sp)await sb.from('session_players').update({goalkeeper_turns:Number(sp.goalkeeper_turns||0)+1}).eq('id',sp.id);
  await refresh(false);
  return true;
 }
@@ -323,15 +332,23 @@ function queue(){
  $$('[data-rest-left]').forEach(b=>b.onclick=async()=>{const ok=await confirmAction('Jogador vai embora?','Ele sairá da pelada de hoje, mas continuará cadastrado para outras datas.','OK');if(!ok)return;await sb.from('session_players').update({status:'left',left_at:new Date().toISOString(),voluntarily_resting:false}).eq('id',b.dataset.restLeft);refresh()});
 }
 async function createMatch(){
- let n=S.settings?.players_per_team||6,q=pri();if(q.length<n*2)return alert('São necessários '+(n*2)+' jogadores para a primeira partida.');
- let seq=Math.max(0,...S.matches.map(x=>x.sequence_no))+1,r=await sb.from('matches').insert({session_id:S.session.id,sequence_no:seq,status:'scheduled'}).select().single();let m=r.data,chosen=q.slice(0,n*2),left=chosen.slice(0,n),right=chosen.slice(n);
+ const n=S.settings?.players_per_team||6,q=pri();
+ const fixed=q.filter(isFixedTodayRow).slice(0,2),linePool=q.filter(x=>!isFixedTodayRow(x));
+ const needLines=n*2-fixed.length;
+ if(linePool.length<needLines)return alert(`São necessários ${needLines} jogadores de linha disponíveis, além dos goleiros fixos presentes, para formar a primeira partida.`);
+ const leftFixed=fixed[0]?[fixed[0]]:[],rightFixed=fixed[1]?[fixed[1]]:[],lines=linePool.slice(0,needLines);
+ const leftNeed=n-leftFixed.length,left=[...leftFixed,...lines.slice(0,leftNeed)],right=[...rightFixed,...lines.slice(leftNeed,leftNeed+(n-rightFixed.length))],chosen=[...left,...right];
+ if(left.length!==n||right.length!==n)return alert('Não foi possível completar os dois times.');
+ const seq=Math.max(0,...S.matches.map(x=>x.sequence_no))+1,r=await sb.from('matches').insert({session_id:S.session.id,sequence_no:seq,status:'scheduled'}).select().single();
+ if(r.error)return alert(r.error.message);const m=r.data;
  await sb.from('match_players').insert([...left.map(x=>({match_id:m.id,player_id:x.player_id,side:'left'})),...right.map(x=>({match_id:m.id,player_id:x.player_id,side:'right'}))]);
  await sb.from('session_players').update({status:'playing'}).in('id',chosen.map(x=>x.id));
- for(let side of ['left','right']){
-   let ids=(side==='left'?left:right),g=ids.find(x=>x.players.is_fixed_goalkeeper)||ids.filter(x=>x.players.can_play_goalkeeper).sort((a,b)=>a.goalkeeper_turns-b.goalkeeper_turns)[0];
+ for(const side of ['left','right']){
+   const rows=side==='left'?left:right;
+   const g=rows.find(isFixedTodayRow)||rows.filter(x=>x.players.can_play_goalkeeper).sort((a,b)=>Number(a.goalkeeper_turns||0)-Number(b.goalkeeper_turns||0)||Number(a.goalkeeper_seconds||0)-Number(b.goalkeeper_seconds||0))[0];
    if(g){
      await sb.from('match_players').update({is_goalkeeper:true}).eq('match_id',m.id).eq('player_id',g.player_id);
-     await sb.from('session_players').update({goalkeeper_turns:g.goalkeeper_turns+1}).eq('id',g.id);
+     await sb.from('session_players').update({goalkeeper_turns:Number(g.goalkeeper_turns||0)+1}).eq('id',g.id);
    }
  }
  await refresh();S.tab='judge';render();
