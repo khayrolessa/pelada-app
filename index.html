@@ -447,12 +447,22 @@ async function bootJudge(token){
    $$('[data-g]').forEach(b=>b.onclick=()=>{let sd=b.dataset.g,ch=side(sd),n=Number(prompt('Quem marcou?\n'+ch.map((p,i)=>`${i+1}. ${p.players.name}`).join('\n')))-1;if(!ch[n])return;let rem=ch.filter((_,i)=>i!==n),a=prompt('Assistência: 0 = sem assistência\n'+rem.map((p,i)=>`${i+1}. ${p.players.name}`).join('\n')),ai=Number(a)-1;call('goal',{side:sd,scorer_id:ch[n].player_id,assist_id:a==='0'?null:rem[ai]?.player_id||null}).then(draw)});
    $$('[data-sv]').forEach(b=>b.onclick=()=>call('save',{side:b.dataset.sv}).then(draw));
    $$('[data-pen]').forEach(b=>b.onclick=async()=>{let sd=b.dataset.pen,ch=side(sd),n=Number(prompt('Cobrador:\n'+ch.map((p,i)=>`${i+1}. ${p.players.name}`).join('\n')))-1;if(!ch[n])return;let r=prompt('Resultado: G = gol, D = defesa, F = fora/trave','G')?.toUpperCase(),result=r==='D'?'saved':r==='F'?'missed':'goal';await call('penalty',{side:sd,shooter_id:ch[n].player_id,result});draw()});
-   $('#jp').onclick=()=>call(m.status==='scheduled'?'start':m.status==='paused'?'resume':'pause').then(draw);
-   $('#ju').onclick=()=>call('undo').then(draw);
-   $('#jg').onclick=async()=>{let sd=prompt('L para esquerdo ou R para direito','L')?.toUpperCase()==='R'?'right':'left',ch=side(sd),n=Number(prompt(ch.map((p,i)=>`${i+1}. ${p.players.name}`).join('\n')))-1;if(ch[n])await call('goalkeeper_change',{side:sd,new_goalkeeper_id:ch[n].player_id});draw()};
+   $('#jp').onclick=async()=>{
+     const action=m.status==='scheduled'?'start':m.status==='paused'?'resume':'pause';
+     const msg=action==='start'?'Iniciar o cronômetro desta partida?':action==='pause'?'Pausar o cronômetro agora?':'Retomar o cronômetro agora?';
+     const ok=await confirmAction('Confirmar cronômetro?',msg,'OK');if(!ok)return;await call(action);draw();
+   };
+   $('#ju').onclick=async()=>{const ok=await confirmAction('Desfazer último evento?','O último gol, defesa, pênalti ou troca registrada será revertido.','OK');if(!ok)return;await call('undo');draw()};
+   $('#jg').onclick=async()=>{
+     const sd=prompt('L para esquerdo ou R para direito','L')?.toUpperCase()==='R'?'right':'left',ch=side(sd);
+     const pid=await choosePlayerAction('Quem será o goleiro?',ch,'Escolha o jogador que assumirá o gol.');if(!pid)return;
+     const oldGk=ch.find(p=>p.is_goalkeeper),next=ch.find(p=>p.player_id===pid);if(!next||oldGk?.player_id===pid)return;
+     const ok=await confirmAction('Confirmar troca de goleiro?',`${oldGk?.players?.name||'Goleiro atual'} sairá do gol e ${next.players.name} assumirá.`,'OK');if(!ok)return;
+     await call('goalkeeper_change',{side:sd,new_goalkeeper_id:pid});draw();
+   };
   }catch(e){document.body.innerHTML='<div class="login"><div class="card"><h2>Acesso do juiz</h2><p>'+esc(e.message)+'</p></div></div>'}
  }
- draw();setInterval(draw,2000);
+ draw();setInterval(()=>{if(!document.getElementById('actionConfirmOverlay')&&!document.getElementById('playerChoiceOverlay'))draw()},2000);
 }
 </script>
 </body></html>
