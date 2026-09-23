@@ -299,28 +299,35 @@ async function finalize(win,dur,both){
  const n=S.settings?.players_per_team||6;
  if(both){
    const q=waitingBefore;
-   if(q.length>=n*2)await createNext(q.slice(0,n).map(x=>x.player_id),q.slice(n,n*2).map(x=>x.player_id),false);
+   if(q.length>=n*2)await createNext(q.slice(0,n).map(x=>x.player_id),q.slice(n,n*2).map(x=>x.player_id),[]);
  }else{
    const keep=win==='left'?leftIds:rightIds,losers=win==='left'?rightIds:leftIds;
    let incoming=waitingBefore.slice(0,n).map(x=>x.player_id);
    if(incoming.length<n){
-     const candidates=losers.map(id=>sessionRows.find(x=>x.player_id===id)).filter(Boolean).sort((a,b)=>a.play_seconds-b.play_seconds||a.goalkeeper_seconds-b.goalkeeper_seconds);
+     const candidates=losers.map(id=>sessionRows.find(x=>x.player_id===id)).filter(Boolean).sort((a,b)=>
+       (a.play_seconds+dur)-(b.play_seconds+dur) ||
+       (a.consecutive_plays+1)-(b.consecutive_plays+1) ||
+       b.waiting_seconds-a.waiting_seconds ||
+       new Date(a.arrived_at)-new Date(b.arrived_at) ||
+       String(a.players?.name||'').localeCompare(String(b.players?.name||''),'pt-BR')
+     );
      for(const x of candidates){if(incoming.length>=n)break;if(!incoming.includes(x.player_id))incoming.push(x.player_id)}
    }
    if(keep.length===n&&incoming.length===n){
-     if(win==='left')await createNext(keep,incoming,true);else await createNext(incoming,keep,true);
+     const reusedIds=incoming.filter(id=>losers.includes(id));
+     if(win==='left')await createNext(keep,incoming,reusedIds);else await createNext(incoming,keep,reusedIds);
    }
  }
  await refresh();S.tab='queue';render();
 }
-async function createNext(left,right,markReuse=false){
+async function createNext(left,right,reusedIds=[]){
  let seq=Math.max(0,...S.matches.map(x=>x.sequence_no))+1,r=await sb.from('matches').insert({session_id:S.session.id,sequence_no:seq,status:'scheduled'}).select().single(),m=r.data;
- const prevIds=new Set(S.mp.map(x=>x.player_id));
- await sb.from('match_players').insert([...left.map(id=>({match_id:m.id,player_id:id,side:'left',reused_from_loser:markReuse&&prevIds.has(id)})),...right.map(id=>({match_id:m.id,player_id:id,side:'right',reused_from_loser:markReuse&&prevIds.has(id)}))]);
+ const reused=new Set(reusedIds);
+ await sb.from('match_players').insert([...left.map(id=>({match_id:m.id,player_id:id,side:'left',reused_from_loser:reused.has(id)})),...right.map(id=>({match_id:m.id,player_id:id,side:'right',reused_from_loser:reused.has(id)}))]);
  await sb.from('session_players').update({status:'playing'}).in('player_id',[...left,...right]).eq('session_id',S.session.id);
  const {data:rows}=await sb.from('session_players').select('*,players(*)').eq('session_id',S.session.id);
  for(const side of ['left','right']){
-   const ids=side==='left'?left:right,g=(rows||[]).filter(x=>ids.includes(x.player_id)&&x.players.can_play_goalkeeper).sort((a,b)=>a.goalkeeper_turns-b.goalkeeper_turns||a.goalkeeper_seconds-b.goalkeeper_seconds)[0];
+   const ids=side==='left'?left:right,g=(rows||[]).filter(x=>ids.includes(x.player_id)&&x.players.can_play_goalkeeper).sort((a,b)=>a.goalkeeper_turns-b.goalkeeper_turns||a.goalkeeper_seconds-b.goalkeeper_seconds||new Date(a.arrived_at)-new Date(b.arrived_at))[0];
    if(g){
      await sb.from('match_players').update({is_goalkeeper:true}).eq('match_id',m.id).eq('player_id',g.player_id);
      await sb.from('session_players').update({goalkeeper_turns:g.goalkeeper_turns+1}).eq('id',g.id);
