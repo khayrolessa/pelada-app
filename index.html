@@ -159,12 +159,13 @@ async function dailyHighlights(){
 function players(){
  let pm=Object.fromEntries(S.payments.map(x=>[x.player_id,x]));
  $('#content').innerHTML=`<div class="card spread"><div><h3>Jogadores de hoje</h3><div class="muted">Chegada e pagamento.</div></div><button id="add" class="btn primary">+ Adicionar</button></div><div class="list" style="margin-top:10px">${S.sp.length?S.sp.map(x=>`<div class="item spread"><div><b>${esc(x.players.name)}</b><div class="muted">${x.status}</div></div><div class="row"><span class="pill">${pm[x.player_id]?.status==='paid'?fmt(pm[x.player_id].amount):pm[x.player_id]?.status||'pendente'}</span>${pm[x.player_id]?.status==='pending'?'<button class="btn primary" data-receive="'+x.player_id+'">Receber</button>':''}${x.status!=='left'?'<button class="btn red" data-left="'+x.id+'">Sair</button>':''}</div></div>`).join(''):'<div class="card empty">Nenhum jogador hoje.</div>'}</div>`;
- $('#add').onclick=addPlayer;$$('[data-left]').forEach(b=>b.onclick=async()=>{await sb.from('session_players').update({status:'left',left_at:new Date().toISOString()}).eq('id',b.dataset.left);refresh()});$$('[data-receive]').forEach(b=>b.onclick=()=>receivePayment(b.dataset.receive));
+ $('#add').onclick=addPlayer;$('[data-left]').forEach(b=>b.onclick=async()=>{const ok=await confirmAction('Jogador vai embora?','Ele sairá da pelada de hoje, mas continuará cadastrado para outras datas.','OK');if(!ok)return;await sb.from('session_players').update({status:'left',left_at:new Date().toISOString(),voluntarily_resting:false}).eq('id',b.dataset.left);refresh()});$$('[data-receive]').forEach(b=>b.onclick=()=>receivePayment(b.dataset.receive));
 }
 async function receivePayment(playerId){
  const p=S.payments.find(x=>x.player_id===playerId);if(!p)return;
  const row=S.sp.find(x=>x.player_id===playerId),amount=Number(prompt('Valor recebido',String(S.settings?.default_fee||16))||0);if(amount<0)return;
  const method=prompt('Forma de pagamento','Pix')||'Pix';
+ const ok=await confirmAction('Confirmar recebimento?',`Registrar ${fmt(amount)} como recebido de ${row?.players?.name||'jogador'} via ${method}?`,'OK');if(!ok)return;
  await sb.from('payments').update({status:'paid',amount,method,paid_at:new Date().toISOString()}).eq('id',p.id);
  const {data:entry}=await sb.from('cash_entries').select('id').eq('payment_id',p.id).maybeSingle();
  if(!entry&&amount>0)await sb.from('cash_entries').insert({session_id:S.session.id,owner_id:S.user.id,payment_id:p.id,entry_type:'income',description:'Pagamento - '+(row?.players?.name||'jogador'),amount});
