@@ -389,18 +389,17 @@ async function midMatchSubstitution(){
    status:'playing',voluntarily_resting:false,left_at:null,
    waiting_seconds:Number(innSp.waiting_seconds||0)+sec,consecutive_waits:0
  }).eq('id',innSp.id);
- await sb.from('match_events').insert([
-   {match_id:S.active.id,event_type:'player_out',side,player_id:out.player_id,match_second:sec,metadata:{reason:'left_pelada'}},
-   {match_id:S.active.id,event_type:'player_in',side,player_id:inn.player_id,match_second:sec,metadata:{replaced_player_id:out.player_id}}
- ]);
  if(out.is_goalkeeper&&newGkId){
    await sb.from('match_players').update({is_goalkeeper:false}).eq('match_id',S.active.id).eq('side',side).is('exited_at',null);
    await sb.from('match_players').update({is_goalkeeper:true}).eq('match_id',S.active.id).eq('player_id',newGkId).is('exited_at',null);
    await sb.from('goalkeeper_stints').insert({match_id:S.active.id,side,player_id:newGkId,started_second:sec});
    const newGkSp=S.sp.find(x=>x.player_id===newGkId);
    if(newGkSp)await sb.from('session_players').update({goalkeeper_turns:Number(newGkSp.goalkeeper_turns||0)+1}).eq('id',newGkSp.id);
-   await sb.from('match_events').insert({match_id:S.active.id,event_type:'goalkeeper_change',side,player_id:newGkId,goalkeeper_id:newGkId,match_second:sec,metadata:{from:out.player_id,to:newGkId}});
  }
+ await sb.from('match_events').insert({
+   match_id:S.active.id,event_type:'player_in',side,player_id:inn.player_id,match_second:sec,
+   metadata:{substitution:true,replaced_player_id:out.player_id,out_was_goalkeeper:!!out.is_goalkeeper,new_goalkeeper_id:newGkId||null,incoming_waiting_before:Number(innSp?.waiting_seconds||0)}
+ });
  await refresh();
 }
 async function swapGk(){
@@ -429,18 +428,37 @@ async function undo(){
  const lastE=S.events.filter(x=>!x.voided).at(-1),lastP=S.pens.filter(x=>!x.voided).at(-1);
  if(!lastE&&!lastP)return alert('Nada para desfazer.');
  const eTime=lastE?new Date(lastE.occurred_at).getTime():0,pTime=lastP?new Date(lastP.created_at).getTime():0;
- const desc=lastP&&pTime>eTime?'o último pênalti':lastE?.event_type==='goal'?'o último gol':lastE?.event_type==='save'?'a última defesa':lastE?.event_type==='goalkeeper_change'?'a última troca de goleiro':'o último evento';
+ const isSub=!!lastE?.metadata?.substitution;
+ const desc=lastP&&pTime>eTime?'o último pênalti':isSub?'a última substituição':lastE?.event_type==='goal'?'o último gol':lastE?.event_type==='save'?'a última defesa':lastE?.event_type==='goalkeeper_change'?'a última troca de goleiro':'o último evento';
  const ok=await confirmAction('Desfazer alteração?',`Deseja realmente desfazer ${desc}?`,'OK');if(!ok)return;
  if(lastP&&pTime>eTime){
    await sb.from('penalties').update({voided:true}).eq('id',lastP.id);
    if(lastP.result==='goal'){const fld=lastP.side==='left'?'left_penalty_score':'right_penalty_score';await sb.from('matches').update({[fld]:Math.max(0,Number(S.active[fld])-1)}).eq('id',S.active.id)}
  }else if(lastE){
-   await sb.from('match_events').update({voided:true,voided_at:new Date().toISOString()}).eq('id',lastE.id);
-   if(lastE.event_type==='goal'){const fld=lastE.side==='left'?'left_score':'right_score';await sb.from('matches').update({[fld]:Math.max(0,Number(S.active[fld])-1)}).eq('id',S.active.id)}
-   if(lastE.event_type==='goalkeeper_change'){
-     const from=lastE.metadata?.from,to=lastE.metadata?.to;
-     if(to)await sb.from('match_players').update({is_goalkeeper:false}).eq('match_id',S.active.id).eq('player_id',to);
-     if(from)await sb.from('match_players').update({is_goalkeeper:true}).eq('match_id',S.active.id).eq('player_id',from);
+   if(isSub){
+     const incoming=lastE.player_id,outgoing=lastE.metadata?.replaced_player_id,sec=Number(lastE.match_second||0),newGk=lastE.metadata?.new_goalkeeper_id||null,wasGk=!!lastE.metadata?.out_was_goalkeeper;
+     await sb.from('match_players').delete().eq('match_id',S.active.id).eq('player_id',incoming).is('exited_at',null);
+     await sb.from('match_players').update({exited_at:null,exited_second:null,is_goalkeeper:wasGk}).eq('match_id',S.active.id).eq('player_id',outgoing);
+     const inSp=S.sp.find(x=>x.player_id===incoming),outSp=S.sp.find(x=>x.player_id===outgoing);
+     if(inSp)await sb.from('session_players').update({status:'waiting',left_at:null,waiting_seconds:Number(lastE.metadata?.incoming_waiting_before??Math.max(0,Number(inSp.waiting_seconds||0)-sec))}).eq('id',inSp.id);
+     if(outSp)await sb.from('session_players').update({status:'playing',left_at:null}).eq('id',outSp.id);
+     if(wasGk){
+       if(newGk)await sb.from('goalkeeper_stints').delete().eq('match_id',S.active.id).eq('player_id',newGk).eq('started_second',sec);
+       await sb.from('goalkeeper_stints').update({ended_second:null}).eq('match_id',S.active.id).eq('player_id',outgoing).eq('ended_second',sec);
+       await sb.from('match_players').update({is_goalkeeper:false}).eq('match_id',S.active.id).eq('side',lastE.side).is('exited_at',null);
+       await sb.from('match_players').update({is_goalkeeper:true}).eq('match_id',S.active.id).eq('player_id',outgoing);
+     }
+     await sb.from('match_events').update({voided:true,voided_at:new Date().toISOString()}).eq('id',lastE.id);
+   }else{
+     await sb.from('match_events').update({voided:true,voided_at:new Date().toISOString()}).eq('id',lastE.id);
+     if(lastE.event_type==='goal'){const fld=lastE.side==='left'?'left_score':'right_score';await sb.from('matches').update({[fld]:Math.max(0,Number(S.active[fld])-1)}).eq('id',S.active.id)}
+     if(lastE.event_type==='goalkeeper_change'){
+       const from=lastE.metadata?.from,to=lastE.metadata?.to;
+       if(to)await sb.from('match_players').update({is_goalkeeper:false}).eq('match_id',S.active.id).eq('player_id',to).is('exited_at',null);
+       if(from)await sb.from('match_players').update({is_goalkeeper:true}).eq('match_id',S.active.id).eq('player_id',from).is('exited_at',null);
+       if(to)await sb.from('goalkeeper_stints').delete().eq('match_id',S.active.id).eq('player_id',to).eq('started_second',lastE.match_second);
+       if(from)await sb.from('goalkeeper_stints').update({ended_second:null}).eq('match_id',S.active.id).eq('player_id',from).eq('ended_second',lastE.match_second);
+     }
    }
  }
  refresh();
