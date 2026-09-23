@@ -198,13 +198,31 @@ async function ensureGoalkeeperForSide(side){
  await refresh(false);
  return true;
 }
-async function chooseGoalkeeperBeforeReplacement(side,outPlayerId,inn){
- const base=S.mp.filter(x=>x.side===side&&x.player_id!==outPlayerId);
- const incoming={player_id:inn.player_id,players:inn.players};
- let choices=[...base,incoming];
- const eligible=choices.filter(x=>x.players?.can_play_goalkeeper);
- if(eligible.length)choices=eligible;
- return await choosePlayerAction('Quem será o goleiro?',choices,'A troca retira o goleiro atual. Escolha quem ficará no gol antes de confirmar a alteração.');
+async function assignScheduledGoalkeeper(side){
+ if(!S.active||S.active.status!=='scheduled')return false;
+ const team=sideP(side);
+ const current=team.find(x=>x.is_goalkeeper);if(current)return true;
+ let choices=team.filter(x=>x.players?.can_play_goalkeeper);if(!choices.length)choices=team;
+ const pid=await choosePlayerAction('Definir goleiro',choices,`O time ${side==='left'?'esquerdo':'direito'} está sem goleiro. Escolha quem ficará no gol.`);
+ if(!pid)return false;
+ const p=team.find(x=>x.player_id===pid);if(!p)return false;
+ const ok=await confirmAction('Confirmar goleiro?',`${p.players.name} ficará no gol neste time.`,'OK');if(!ok)return false;
+ await sb.from('match_players').update({is_goalkeeper:false}).eq('match_id',S.active.id).eq('side',side);
+ await sb.from('match_players').update({is_goalkeeper:true}).eq('match_id',S.active.id).eq('player_id',pid);
+ const sp=S.sp.find(x=>x.player_id===pid);if(sp)await sb.from('session_players').update({goalkeeper_turns:sp.goalkeeper_turns+1}).eq('id',sp.id);
+ await refresh(false);
+ return true;
+}
+async function ensureGoalkeepersBeforeStart(){
+ await refresh(false);
+ for(const side of ['left','right']){
+   if(!sideP(side).some(x=>x.is_goalkeeper)){
+     const ok=await assignScheduledGoalkeeper(side);
+     if(!ok)return false;
+     await refresh(false);
+   }
+ }
+ return true;
 }
 async function replaceSuggested(playerId,mode='queue'){
  if(!S.active||S.active.status!=='scheduled')return;
@@ -215,10 +233,8 @@ async function replaceSuggested(playerId,mode='queue'){
  if(!chosenId)return;
  const inn=candidates.find(x=>x.player_id===chosenId);if(!inn)return;
  const wasGk=!!out.is_goalkeeper;
- let newGkId=null;
- if(wasGk){newGkId=await chooseGoalkeeperBeforeReplacement(out.side,out.player_id,inn);if(!newGkId)return}
  const labels={queue:'voltará para a fila',rest:'irá para descanso voluntário',left:'sairá da pelada de hoje'};
- const gkText=wasGk?' O novo goleiro também será definido nesta alteração.':'';
+ const gkText=wasGk?' O time ficará temporariamente sem goleiro até você definir outro.':'';
  const ok=await confirmAction('Confirmar alteração?',`${out.players.name} ${labels[mode]||'será retirado da formação'} e ${inn.players.name} entrará no time.${gkText}`,'OK');
  if(!ok)return;
  const role=transitionRole(inn.player_id);
@@ -231,10 +247,6 @@ async function replaceSuggested(playerId,mode='queue'){
    await sb.from('session_players').update(patch).eq('id',outSp.id);
  }
  await sb.from('session_players').update({status:'playing',voluntarily_resting:false,left_at:null}).eq('id',inn.id);
- if(wasGk&&newGkId){
-   await sb.from('match_players').update({is_goalkeeper:false}).eq('match_id',S.active.id).eq('side',out.side);
-   await sb.from('match_players').update({is_goalkeeper:true}).eq('match_id',S.active.id).eq('player_id',newGkId);
- }
  await refresh();
 }
 function queue(){
@@ -310,17 +322,12 @@ async function adjustLineup(){
  const oi=Number(prompt('Quem sai?\n'+current.map((p,i)=>`${i+1}. ${p.players.name}`).join('\n')))-1;if(!current[oi])return;
  const ni=Number(prompt('Quem entra?\n'+waiting.map((p,i)=>`${i+1}. ${p.players.name}`).join('\n')))-1;if(!waiting[ni])return;
  const out=current[oi],inn=waiting[ni],wasGk=!!out.is_goalkeeper;
- let newGkId=null;if(wasGk){newGkId=await chooseGoalkeeperBeforeReplacement(side,out.player_id,inn);if(!newGkId)return}
- const ok=await confirmAction('Confirmar troca?',`${out.players.name} sairá da formação e voltará para a fila. ${inn.players.name} entrará no time.${wasGk?' O novo goleiro será definido nesta alteração.':''}`,'OK');
+ const ok=await confirmAction('Confirmar troca?',`${out.players.name} sairá da formação e voltará para a fila. ${inn.players.name} entrará no time.${wasGk?' O time ficará temporariamente sem goleiro até você definir outro.':''}`,'OK');
  if(!ok)return;
  await sb.from('match_players').update({player_id:inn.player_id,is_goalkeeper:false,reused_from_loser:false}).eq('id',out.id);
  const outSp=S.sp.find(x=>x.player_id===out.player_id);
  if(outSp)await sb.from('session_players').update({status:'waiting',voluntarily_resting:false,left_at:null}).eq('id',outSp.id);
  await sb.from('session_players').update({status:'playing',voluntarily_resting:false,left_at:null}).eq('id',inn.id);
- if(wasGk&&newGkId){
-   await sb.from('match_players').update({is_goalkeeper:false}).eq('match_id',S.active.id).eq('side',side);
-   await sb.from('match_players').update({is_goalkeeper:true}).eq('match_id',S.active.id).eq('player_id',newGkId);
- }
  await refresh();
 }
 async function swapGk(){
