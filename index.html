@@ -145,8 +145,8 @@ function sideP(side){return S.mp.filter(x=>x.side===side)}function gk(side){retu
 function judge(){
  if(!S.active)return $('#content').innerHTML='<div class="card empty">Nenhuma partida ativa. Vá até Fila e forme a partida.</div>';
  let m=S.active,max=S.settings?.match_duration_seconds||420,rem=Math.max(0,max-elapsed(m)),tm=side=>sideP(side).map(x=>`<div class="player ${x.is_goalkeeper?'gk':''}">${x.is_goalkeeper?'🧤':'⚽'} ${esc(x.players.name)}</div>`).join('');
- $('#content').innerHTML=`<div class="score"><div class="clock" id="clock">${tsec(rem)}</div><div class="scoreline">${m.left_score} × ${m.right_score}</div><div class="teams"><div class="team"><h4>Lado esquerdo</h4>${tm('left')}<div class="gameBtns"><button class="btn primary" data-goal="left">⚽ Gol</button><button class="btn blue" data-save="left">🧤 Defesa</button></div></div><div class="team"><h4>Lado direito</h4>${tm('right')}<div class="gameBtns"><button class="btn primary" data-goal="right">⚽ Gol</button><button class="btn blue" data-save="right">🧤 Defesa</button></div></div></div><div class="row" style="margin-top:10px"><button id="start" class="btn amber">${m.status==='scheduled'?'▶ Iniciar':m.status==='paused'?'▶ Retomar':'⏸ Pausar'}</button><button id="swap" class="btn">🔄 Trocar goleiro</button><button id="undo" class="btn red">↩ Desfazer</button><button id="end" class="btn ghost">🏁 Encerrar</button><button id="share" class="btn ghost">📱 Acesso juiz</button></div></div><div class="card" style="margin-top:10px"><h3>Súmula</h3>${S.events.filter(x=>!x.voided).slice().reverse().map(e=>`<div>${e.event_type==='goal'?'⚽ Gol':e.event_type==='save'?'🧤 Defesa':'🔄 '+e.event_type} · ${tsec(e.match_second||0)}</div>`).join('')||'<div class="empty">Sem eventos.</div>'}</div>`;
- $$('[data-goal]').forEach(b=>b.onclick=()=>goalFlow(b.dataset.goal));$$('[data-save]').forEach(b=>b.onclick=()=>save(b.dataset.save));$('#start').onclick=toggleTimer;$('#swap').onclick=swapGk;$('#undo').onclick=undo;$('#end').onclick=finish;$('#share').onclick=judgeAccess;
+ $('#content').innerHTML=`<div class="score"><div class="clock" id="clock">${tsec(rem)}</div><div class="scoreline">${m.left_score} × ${m.right_score}</div><div class="teams"><div class="team"><h4>Lado esquerdo</h4>${tm('left')}<div class="gameBtns"><button class="btn primary" data-goal="left">⚽ Gol</button><button class="btn blue" data-save="left">🧤 Defesa</button></div></div><div class="team"><h4>Lado direito</h4>${tm('right')}<div class="gameBtns"><button class="btn primary" data-goal="right">⚽ Gol</button><button class="btn blue" data-save="right">🧤 Defesa</button></div></div></div><div class="row" style="margin-top:10px"><button id="start" class="btn amber">${m.status==='scheduled'?'▶ Iniciar':m.status==='paused'?'▶ Retomar':'⏸ Pausar'}</button><button id="swap" class="btn">🔄 Trocar goleiro</button>${m.status==='scheduled'?'<button id="lineup" class="btn">✏️ Ajustar escalação</button>':''}<button id="undo" class="btn red">↩ Desfazer</button><button id="end" class="btn ghost">🏁 Encerrar</button><button id="share" class="btn ghost">📱 Acesso juiz</button></div></div><div class="card" style="margin-top:10px"><h3>Súmula</h3>${S.events.filter(x=>!x.voided).slice().reverse().map(e=>`<div>${e.event_type==='goal'?'⚽ Gol':e.event_type==='save'?'🧤 Defesa':'🔄 '+e.event_type} · ${tsec(e.match_second||0)}</div>`).join('')||'<div class="empty">Sem eventos.</div>'}</div>`;
+ $$('[data-goal]').forEach(b=>b.onclick=()=>goalFlow(b.dataset.goal));$$('[data-save]').forEach(b=>b.onclick=()=>save(b.dataset.save));$('#start').onclick=toggleTimer;$('#swap').onclick=swapGk;$('#lineup')?.addEventListener('click',adjustLineup);$('#undo').onclick=undo;$('#end').onclick=finish;$('#share').onclick=judgeAccess;
  clearInterval(S.timer);let autoEnded=false;S.timer=setInterval(()=>{let c=$('#clock'),left=Math.max(0,max-elapsed(S.active));if(c)c.textContent=tsec(left);if(left<=0&&S.active?.status==='live'&&!autoEnded){autoEnded=true;finish(true)}},1000);
 }
 function goalFlow(side){let ps=sideP(side);$('#modal').innerHTML=`<div class="modalBack"><div class="modal"><h3>Quem marcou?</h3><div class="choice">${ps.map(p=>`<button data-s="${p.player_id}">${esc(p.players.name)}</button>`).join('')}</div></div></div>`;$$('[data-s]').forEach(b=>b.onclick=()=>assistFlow(side,b.dataset.s))}
@@ -169,6 +169,20 @@ async function toggleTimer(){
  }else{
    await sb.from('matches').update({status:'paused',elapsed_before_pause_seconds:elapsed(m),started_at:null,paused_at:new Date().toISOString()}).eq('id',m.id);
  }
+ refresh();
+}
+async function adjustLineup(){
+ if(!S.active||S.active.status!=='scheduled')return;
+ const side=prompt('L para time esquerdo ou R para time direito','L')?.toUpperCase()==='R'?'right':'left';
+ const current=sideP(side),waiting=S.sp.filter(x=>x.status==='waiting');
+ if(!waiting.length)return alert('Não há jogador disponível na fila.');
+ const oi=Number(prompt('Quem sai?\n'+current.map((p,i)=>`${i+1}. ${p.players.name}`).join('\n')))-1;if(!current[oi])return;
+ const ni=Number(prompt('Quem entra?\n'+waiting.map((p,i)=>`${i+1}. ${p.players.name}`).join('\n')))-1;if(!waiting[ni])return;
+ const out=current[oi],inn=waiting[ni];
+ await sb.from('match_players').update({player_id:inn.player_id,is_goalkeeper:out.is_goalkeeper}).eq('id',out.id);
+ const outSp=S.sp.find(x=>x.player_id===out.player_id);
+ if(outSp)await sb.from('session_players').update({status:'waiting'}).eq('id',outSp.id);
+ await sb.from('session_players').update({status:'playing'}).eq('id',inn.id);
  refresh();
 }
 function swapGk(){let side=prompt('L para esquerdo ou R para direito','L')?.toUpperCase()==='R'?'right':'left',ps=sideP(side);let n=Number(prompt(ps.map((p,i)=>`${i+1}. ${p.players.name}`).join('\n')))-1;if(ps[n])changeGk(side,ps[n].player_id)}
