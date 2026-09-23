@@ -170,8 +170,26 @@ async function dailyHighlights(){
 }
 function players(){
  let pm=Object.fromEntries(S.payments.map(x=>[x.player_id,x]));
- $('#content').innerHTML=`<div class="card spread"><div><h3>Jogadores de hoje</h3><div class="muted">Chegada e pagamento.</div></div><button id="add" class="btn primary">+ Adicionar</button></div><div class="list" style="margin-top:10px">${S.sp.length?S.sp.map(x=>`<div class="item spread"><div><b>${esc(x.players.name)}</b><div class="muted">${x.status}</div></div><div class="row"><span class="pill">${pm[x.player_id]?.status==='paid'?fmt(pm[x.player_id].amount):pm[x.player_id]?.status||'pendente'}</span>${pm[x.player_id]?.status==='pending'?'<button class="btn primary" data-receive="'+x.player_id+'">Receber</button>':''}${x.status!=='left'?'<button class="btn red" data-left="'+x.id+'">Sair</button>':''}</div></div>`).join(''):'<div class="card empty">Nenhum jogador hoje.</div>'}</div>`;
- $('#add').onclick=addPlayer;$$('[data-left]').forEach(b=>b.onclick=async()=>{const ok=await confirmAction('Jogador vai embora?','Ele sairá da pelada de hoje, mas continuará cadastrado para outras datas.','OK');if(!ok)return;await sb.from('session_players').update({status:'left',left_at:new Date().toISOString(),voluntarily_resting:false}).eq('id',b.dataset.left);refresh()});$$('[data-receive]').forEach(b=>b.onclick=()=>receivePayment(b.dataset.receive));
+ $('#content').innerHTML=`<div class="card spread"><div><h3>Jogadores de hoje</h3><div class="muted">Chegada, função e pagamento.</div></div><button id="add" class="btn primary">+ Adicionar</button></div><div class="list" style="margin-top:10px">${S.sp.length?S.sp.map(x=>`<div class="item spread"><div><b>${esc(x.players.name)}</b><div class="muted">${x.status} · ${x.fixed_goalkeeper_active?'🧤 Goleiro fixo hoje':x.players.is_fixed_goalkeeper?'🧤 Goleiro fixo (liberado para linha hoje)':x.players.can_play_goalkeeper?'Pode ir ao gol':'Somente linha'}</div></div><div class="row"><span class="pill">${pm[x.player_id]?.status==='paid'?fmt(pm[x.player_id].amount):pm[x.player_id]?.status||'pendente'}</span><button class="btn ghost" data-edit-player="${x.player_id}">Editar</button>${pm[x.player_id]?.status==='pending'?'<button class="btn primary" data-receive="'+x.player_id+'">Receber</button>':''}${x.status!=='left'?'<button class="btn red" data-left="'+x.id+'">Sair</button>':''}</div></div>`).join(''):'<div class="card empty">Nenhum jogador hoje.</div>'}</div>`;
+ $('#add').onclick=addPlayer;
+ $$('[data-edit-player]').forEach(b=>b.onclick=()=>editPlayerProfile(b.dataset.editPlayer));
+ $$('[data-left]').forEach(b=>b.onclick=async()=>{const ok=await confirmAction('Jogador vai embora?','Ele sairá da pelada de hoje, mas continuará cadastrado para outras datas.','OK');if(!ok)return;await sb.from('session_players').update({status:'left',left_at:new Date().toISOString(),voluntarily_resting:false}).eq('id',b.dataset.left);refresh()});
+ $$('[data-receive]').forEach(b=>b.onclick=()=>receivePayment(b.dataset.receive));
+}
+function editPlayerProfile(playerId){
+ const p=S.players.find(x=>x.id===playerId);if(!p)return;
+ const sp=S.sp.find(x=>x.player_id===playerId);
+ $('#modal').innerHTML=`<div class="modalBack"><div class="modal"><h3>Editar jogador</h3><div class="stack"><div class="field"><label>Nome</label><input id="epName" value="${esc(p.name)}"></div><label><input type="checkbox" id="epCan" ${p.can_play_goalkeeper?'checked':''} style="width:auto"> Pode ir ao gol</label><label><input type="checkbox" id="epFixed" ${p.is_fixed_goalkeeper?'checked':''} style="width:auto"> 🧤 Goleiro fixo</label><p class="muted">Goleiro fixo permanece no gol mesmo quando o time perde. Se ele passar o gol durante a pelada, essa proteção é desligada apenas naquele dia.</p><button id="epSave" class="btn primary">Salvar</button><button id="epClose" class="btn ghost">Cancelar</button></div></div></div>`;
+ $('#epFixed').onchange=()=>{if($('#epFixed').checked)$('#epCan').checked=true};
+ $('#epClose').onclick=()=>$('#modal').innerHTML='';
+ $('#epSave').onclick=async()=>{
+   const name=$('#epName').value.trim();if(!name)return alert('Informe o nome');
+   const fixed=$('#epFixed').checked,can=fixed||$('#epCan').checked;
+   const ok=await confirmAction('Salvar jogador?',fixed?'Este jogador ficará cadastrado como goleiro fixo.':'Salvar estas características do jogador?','OK');if(!ok)return;
+   const r=await sb.from('players').update({name,can_play_goalkeeper:can,is_fixed_goalkeeper:fixed}).eq('id',playerId);if(r.error)return alert(r.error.message);
+   if(sp&&sp.status!=='left')await sb.from('session_players').update({fixed_goalkeeper_active:fixed}).eq('id',sp.id);
+   $('#modal').innerHTML='';refresh();
+ };
 }
 async function receivePayment(playerId){
  const p=S.payments.find(x=>x.player_id===playerId);if(!p)return;
@@ -184,9 +202,29 @@ async function receivePayment(playerId){
  refresh();
 }
 function addPlayer(){
- let existing=new Set(S.sp.map(x=>x.player_id));$('#modal').innerHTML=`<div class="modalBack"><div class="modal"><h3>Adicionar jogador</h3><div class="stack"><div class="field"><label>Jogador cadastrado</label><select id="sel"><option value="">Novo jogador...</option>${S.players.filter(p=>!existing.has(p.id)).map(p=>`<option value="${p.id}">${esc(p.name)}</option>`).join('')}</select></div><div class="field"><label>Nome (se novo)</label><input id="newn"></div><label><input type="checkbox" id="cang" checked style="width:auto"> Pode ir ao gol</label><div class="field"><label>Pagamento</label><select id="ps"><option value="paid">Pago</option><option value="pending">Pendente</option><option value="exempt">Isento</option></select></div><div class="field"><label>Valor</label><input id="pv" type="number" value="${S.settings?.default_fee||16}"></div><div class="field"><label>Forma</label><select id="meth"><option>Pix</option><option>Dinheiro</option><option>Outro</option></select></div><button id="savep" class="btn primary">Confirmar chegada</button><button id="close" class="btn ghost">Cancelar</button></div></div></div>`;
- $('#close').onclick=()=>$('#modal').innerHTML='';$('#savep').onclick=async()=>{let pid=$('#sel').value;if(!pid){let name=$('#newn').value.trim();if(!name)return alert('Informe o nome');let r=await sb.from('players').insert({owner_id:S.user.id,name,can_play_goalkeeper:$('#cang').checked}).select().single();if(r.error)return alert(r.error.message);pid=r.data.id}let ps=$('#ps').value,val=ps==='paid'?Number($('#pv').value||0):0;await sb.from('session_players').insert({session_id:S.session.id,player_id:pid,status:'waiting'});await sb.from('payments').insert({session_id:S.session.id,player_id:pid,status:ps,amount:val,method:$('#meth').value,paid_at:ps==='paid'?new Date().toISOString():null});if(ps==='paid'&&val>0)await sb.from('cash_entries').insert({session_id:S.session.id,owner_id:S.user.id,entry_type:'income',description:'Pagamento de jogador',amount:val});$('#modal').innerHTML='';refresh()};
+ let existing=new Set(S.sp.map(x=>x.player_id));
+ $('#modal').innerHTML=`<div class="modalBack"><div class="modal"><h3>Adicionar jogador</h3><div class="stack"><div class="field"><label>Jogador cadastrado</label><select id="sel"><option value="">Novo jogador...</option>${S.players.filter(p=>!existing.has(p.id)).map(p=>`<option value="${p.id}">${esc(p.name)}${p.is_fixed_goalkeeper?' · 🧤 fixo':''}</option>`).join('')}</select></div><div class="field"><label>Nome (se novo)</label><input id="newn"></div><label><input type="checkbox" id="cang" checked style="width:auto"> Pode ir ao gol</label><label><input type="checkbox" id="fixedgk" style="width:auto"> 🧤 Goleiro fixo</label><p class="muted">Goleiro fixo permanece no gol nas trocas de times. Marcar esta opção também habilita “pode ir ao gol”.</p><div class="field"><label>Pagamento</label><select id="ps"><option value="paid">Pago</option><option value="pending">Pendente</option><option value="exempt">Isento</option></select></div><div class="field"><label>Valor</label><input id="pv" type="number" value="${S.settings?.default_fee||16}"></div><div class="field"><label>Forma</label><select id="meth"><option>Pix</option><option>Dinheiro</option><option>Outro</option></select></div><button id="savep" class="btn primary">Confirmar chegada</button><button id="close" class="btn ghost">Cancelar</button></div></div></div>`;
+ $('#fixedgk').onchange=()=>{if($('#fixedgk').checked)$('#cang').checked=true};
+ $('#sel').onchange=()=>{const p=S.players.find(x=>x.id===$('#sel').value);if(p){$('#cang').checked=!!p.can_play_goalkeeper;$('#fixedgk').checked=!!p.is_fixed_goalkeeper}};
+ $('#close').onclick=()=>$('#modal').innerHTML='';
+ $('#savep').onclick=async()=>{
+   let pid=$('#sel').value,pdata=S.players.find(x=>x.id===pid)||null;
+   if(!pid){
+     const name=$('#newn').value.trim();if(!name)return alert('Informe o nome');
+     const fixed=$('#fixedgk').checked,can=fixed||$('#cang').checked;
+     const r=await sb.from('players').insert({owner_id:S.user.id,name,can_play_goalkeeper:can,is_fixed_goalkeeper:fixed}).select().single();
+     if(r.error)return alert(r.error.message);pid=r.data.id;pdata=r.data;
+   }
+   const ps=$('#ps').value,val=ps==='paid'?Number($('#pv').value||0):0;
+   const sr=await sb.from('session_players').insert({session_id:S.session.id,player_id:pid,status:'waiting',fixed_goalkeeper_active:!!pdata?.is_fixed_goalkeeper});
+   if(sr.error)return alert(sr.error.message);
+   await sb.from('payments').insert({session_id:S.session.id,player_id:pid,status:ps,amount:val,method:$('#meth').value,paid_at:ps==='paid'?new Date().toISOString():null});
+   if(ps==='paid'&&val>0)await sb.from('cash_entries').insert({session_id:S.session.id,owner_id:S.user.id,entry_type:'income',description:'Pagamento de jogador',amount:val});
+   $('#modal').innerHTML='';refresh();
+ };
 }
+function isFixedTodayRow(x){return !!x?.fixed_goalkeeper_active&&x?.status!=='left'}
+function fixedTodayById(id,rows=S.sp){return !!rows.find(x=>x.player_id===id&&isFixedTodayRow(x))}
 function pri(){return S.sp.filter(x=>x.status==='waiting').sort((a,b)=>b.waiting_seconds-a.waiting_seconds||a.play_seconds-b.play_seconds||b.consecutive_waits-a.consecutive_waits||new Date(a.arrived_at)-new Date(b.arrived_at))}
 function transitionRole(playerId){
  if(!S.active||S.active.status!=='scheduled'||!S.prevMatch)return {label:'Escalado',kind:'neutral'};
