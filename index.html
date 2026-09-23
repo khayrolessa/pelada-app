@@ -262,7 +262,7 @@ function queue(){
  $('#form')?.addEventListener('click',createMatch);
  $('#confirmNext')?.addEventListener('click',async()=>{const gkOk=await ensureGoalkeepersBeforeStart();if(!gkOk)return;const ok=await confirmAction('Confirmar próxima partida?','Goleiros definidos. Deseja confirmar esta formação e abrir a tela do juiz?','OK');if(ok){S.tab='judge';render()}});
  $('#adjustNext')?.addEventListener('click',adjustLineup);
- $('[data-set-gk]').forEach(b=>b.onclick=async()=>{await assignScheduledGoalkeeper(b.dataset.setGk);refresh()});
+ $$('[data-set-gk]').forEach(b=>b.onclick=async()=>{await assignScheduledGoalkeeper(b.dataset.setGk);refresh()});
  $$('[data-swap-proposed]').forEach(b=>b.onclick=()=>replaceSuggested(b.dataset.swapProposed,'queue'));
  $$('[data-rest-proposed]').forEach(b=>b.onclick=()=>replaceSuggested(b.dataset.restProposed,'rest'));
  $$('[data-left-proposed]').forEach(b=>b.onclick=()=>replaceSuggested(b.dataset.leftProposed,'left'));
