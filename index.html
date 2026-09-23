@@ -37,12 +37,31 @@ async function boot(){
  if(S.user)await load();else login();
 }
 function login(){
- $('#app').innerHTML=`<div class="login"><div class="card"><div class="logo">⚽</div><h1>Pelada</h1><p class="muted">Gestão completa da pelada.</p><div class="stack"><div class="field"><label>E-mail</label><input id="email" type="email"></div><div class="field"><label>Senha</label><input id="pass" type="password"></div><button id="in" class="btn primary">Entrar</button><button id="setup" class="btn ghost">Primeiro acesso / criar administrador</button><div id="msg" class="muted"></div></div></div></div>`;
- $('#in').onclick=async()=>{let{error}=await sb.auth.signInWithPassword({email:$('#email').value.trim(),password:$('#pass').value});if(error)return $('#msg').textContent=error.message;await load()};
- $('#setup').onclick=async()=>{let email=$('#email').value.trim(),password=$('#pass').value;if(!email||password.length<6)return $('#msg').textContent='Informe e-mail e senha com 6+ caracteres.';let{error}=await sb.auth.signUp({email,password,options:{data:{username:'khayrolessa'}}});$('#msg').textContent=error?error.message:'Administrador criado. Se houver confirmação por e-mail, confirme e depois entre.'};
+ $('#app').innerHTML=`<div class="login"><div class="card"><div class="logo">⚽</div><h1>Pelada</h1><p class="muted">Gestão completa da pelada.</p><div class="stack"><div class="field"><label>Login</label><input id="login" value="khayrolessa" autocomplete="username"></div><div class="field"><label>Senha</label><input id="pass" type="password" autocomplete="current-password"></div><button id="in" class="btn primary">Entrar</button><button id="setup" class="btn ghost">Primeiro acesso / ativar administrador</button><div id="msg" class="muted"></div></div></div></div>`;
+ $('#in').onclick=async()=>{
+   const login=$('#login').value.trim(),password=$('#pass').value;
+   if(!login||!password)return $('#msg').textContent='Informe login e senha.';
+   if(login.includes('@')){
+     const{error}=await sb.auth.signInWithPassword({email:login,password});if(error)return $('#msg').textContent=error.message;
+   }else{
+     let r=await fetch(URL+'/functions/v1/username-login',{method:'POST',headers:{'Content-Type':'application/json',apikey:KEY},body:JSON.stringify({username:login,password})}),j=await r.json();
+     if(!r.ok)return $('#msg').textContent=j.error||'Falha no login.';
+     const{error}=await sb.auth.setSession({access_token:j.access_token,refresh_token:j.refresh_token});if(error)return $('#msg').textContent=error.message;
+   }
+   await load();
+ };
+ $('#setup').onclick=async()=>{
+   const password=$('#pass').value;if(password.length<6)return $('#msg').textContent='Defina uma senha com pelo menos 6 caracteres.';
+   const email=prompt('Informe seu e-mail apenas para ativar a conta do administrador:');if(!email)return;
+   const{data,error}=await sb.auth.signUp({email:email.trim(),password,options:{data:{username:'khayrolessa'},emailRedirectTo:location.origin}});
+   if(error)return $('#msg').textContent=error.message;
+   $('#msg').textContent=data.session?'Administrador ativado.':'Confira seu e-mail, confirme a conta e depois entre uma vez com esse e-mail. Após isso, use khayrolessa.';
+ };
 }
 async function load(){
  let uid=S.user.id,{data:set}=await sb.from('app_settings').select('*').eq('owner_id',uid).maybeSingle();S.settings=set;
+ const {data:profile}=await sb.from('profiles').select('username').eq('id',uid).maybeSingle();
+ if(profile?.username&&S.user.email)await sb.from('login_aliases').upsert({owner_id:uid,username:profile.username,email:S.user.email},{onConflict:'owner_id'});
  let {data:s}=await sb.from('sessions').select('*').eq('owner_id',uid).eq('session_date',isoToday()).maybeSingle();
  if(!s){let r=await sb.from('sessions').insert({owner_id:uid,session_date:isoToday()}).select().single();s=r.data}S.session=s;
  await refresh(false);shell();
