@@ -202,10 +202,13 @@ async function replaceSuggested(playerId,mode='queue'){
  const out=S.mp.find(x=>x.player_id===playerId);if(!out)return;
  const candidates=pri().filter(x=>x.player_id!==playerId);
  if(!candidates.length)return alert('Não há outro jogador disponível na fila para substituir.');
- const labels={queue:'trocar este jogador pelo primeiro elegível da fila',rest:'mandar este jogador descansar e colocar outro da fila',left:'retirar este jogador da pelada de hoje e colocar outro da fila'};
- const ok=await confirmAction('Confirmar alteração?',`Deseja realmente ${labels[mode]||'fazer esta alteração'}?`,'OK');
+ const chosenId=await choosePlayerAction('Quem entra no lugar?',candidates,'Escolha um jogador que está na fila.');
+ if(!chosenId)return;
+ const inn=candidates.find(x=>x.player_id===chosenId);if(!inn)return;
+ const labels={queue:'voltará para a fila',rest:'irá para descanso voluntário',left:'sairá da pelada de hoje'};
+ const ok=await confirmAction('Confirmar alteração?',`${out.players.name} ${labels[mode]||'será retirado da formação'} e ${inn.players.name} entrará no time.`,'OK');
  if(!ok)return;
- const inn=candidates[0],wasGk=!!out.is_goalkeeper,role=transitionRole(inn.player_id);
+ const wasGk=!!out.is_goalkeeper,role=transitionRole(inn.player_id);
  await sb.from('match_players').update({player_id:inn.player_id,reused_from_loser:role.kind==='reuse',is_goalkeeper:false}).eq('id',out.id);
  const outSp=S.sp.find(x=>x.player_id===playerId);
  if(outSp){
