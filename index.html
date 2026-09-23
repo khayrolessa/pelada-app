@@ -86,8 +86,16 @@ function queue(){
 }
 async function createMatch(){
  let n=S.settings?.players_per_team||6,q=pri();if(q.length<n*2)return alert('São necessários '+(n*2)+' jogadores para a primeira partida.');
- let seq=Math.max(0,...S.matches.map(x=>x.sequence_no))+1,r=await sb.from('matches').insert({session_id:S.session.id,sequence_no:seq,status:'scheduled'}).select().single();let m=r.data,chosen=q.slice(0,n*2),left=chosen.slice(0,n),right=chosen.slice(n);await sb.from('match_players').insert([...left.map(x=>({match_id:m.id,player_id:x.player_id,side:'left'})),...right.map(x=>({match_id:m.id,player_id:x.player_id,side:'right'}))]);await sb.from('session_players').update({status:'playing'}).in('id',chosen.map(x=>x.id));
- for(let side of ['left','right']){let ids=(side==='left'?left:right),g=ids.find(x=>x.players.is_fixed_goalkeeper)||ids.filter(x=>x.players.can_play_goalkeeper).sort((a,b)=>a.goalkeeper_turns-b.goalkeeper_turns)[0];if(g)await sb.from('match_players').update({is_goalkeeper:true}).eq('match_id',m.id).eq('player_id',g.player_id)}
+ let seq=Math.max(0,...S.matches.map(x=>x.sequence_no))+1,r=await sb.from('matches').insert({session_id:S.session.id,sequence_no:seq,status:'scheduled'}).select().single();let m=r.data,chosen=q.slice(0,n*2),left=chosen.slice(0,n),right=chosen.slice(n);
+ await sb.from('match_players').insert([...left.map(x=>({match_id:m.id,player_id:x.player_id,side:'left'})),...right.map(x=>({match_id:m.id,player_id:x.player_id,side:'right'}))]);
+ await sb.from('session_players').update({status:'playing'}).in('id',chosen.map(x=>x.id));
+ for(let side of ['left','right']){
+   let ids=(side==='left'?left:right),g=ids.find(x=>x.players.is_fixed_goalkeeper)||ids.filter(x=>x.players.can_play_goalkeeper).sort((a,b)=>a.goalkeeper_turns-b.goalkeeper_turns)[0];
+   if(g){
+     await sb.from('match_players').update({is_goalkeeper:true}).eq('match_id',m.id).eq('player_id',g.player_id);
+     await sb.from('session_players').update({goalkeeper_turns:g.goalkeeper_turns+1}).eq('id',g.id);
+   }
+ }
  await refresh();S.tab='judge';render();
 }
 function elapsed(m){let s=m?.elapsed_before_pause_seconds||0;if(m?.status==='live'&&m.started_at)s+=Math.floor((Date.now()-new Date(m.started_at))/1000);return s}
@@ -97,24 +105,100 @@ function judge(){
  let m=S.active,max=S.settings?.match_duration_seconds||420,rem=Math.max(0,max-elapsed(m)),tm=side=>sideP(side).map(x=>`<div class="player ${x.is_goalkeeper?'gk':''}">${x.is_goalkeeper?'🧤':'⚽'} ${esc(x.players.name)}</div>`).join('');
  $('#content').innerHTML=`<div class="score"><div class="clock" id="clock">${tsec(rem)}</div><div class="scoreline">${m.left_score} × ${m.right_score}</div><div class="teams"><div class="team"><h4>Lado esquerdo</h4>${tm('left')}<div class="gameBtns"><button class="btn primary" data-goal="left">⚽ Gol</button><button class="btn blue" data-save="left">🧤 Defesa</button></div></div><div class="team"><h4>Lado direito</h4>${tm('right')}<div class="gameBtns"><button class="btn primary" data-goal="right">⚽ Gol</button><button class="btn blue" data-save="right">🧤 Defesa</button></div></div></div><div class="row" style="margin-top:10px"><button id="start" class="btn amber">${m.status==='scheduled'?'▶ Iniciar':m.status==='paused'?'▶ Retomar':'⏸ Pausar'}</button><button id="swap" class="btn">🔄 Trocar goleiro</button><button id="undo" class="btn red">↩ Desfazer</button><button id="end" class="btn ghost">🏁 Encerrar</button><button id="share" class="btn ghost">📱 Acesso juiz</button></div></div><div class="card" style="margin-top:10px"><h3>Súmula</h3>${S.events.filter(x=>!x.voided).slice().reverse().map(e=>`<div>${e.event_type==='goal'?'⚽ Gol':e.event_type==='save'?'🧤 Defesa':'🔄 '+e.event_type} · ${tsec(e.match_second||0)}</div>`).join('')||'<div class="empty">Sem eventos.</div>'}</div>`;
  $$('[data-goal]').forEach(b=>b.onclick=()=>goalFlow(b.dataset.goal));$$('[data-save]').forEach(b=>b.onclick=()=>save(b.dataset.save));$('#start').onclick=toggleTimer;$('#swap').onclick=swapGk;$('#undo').onclick=undo;$('#end').onclick=finish;$('#share').onclick=judgeAccess;
- clearInterval(S.timer);S.timer=setInterval(()=>{let c=$('#clock');if(c)c.textContent=tsec(Math.max(0,max-elapsed(S.active)))},1000);
+ clearInterval(S.timer);let autoEnded=false;S.timer=setInterval(()=>{let c=$('#clock'),left=Math.max(0,max-elapsed(S.active));if(c)c.textContent=tsec(left);if(left<=0&&S.active?.status==='live'&&!autoEnded){autoEnded=true;finish(true)}},1000);
 }
 function goalFlow(side){let ps=sideP(side);$('#modal').innerHTML=`<div class="modalBack"><div class="modal"><h3>Quem marcou?</h3><div class="choice">${ps.map(p=>`<button data-s="${p.player_id}">${esc(p.players.name)}</button>`).join('')}</div></div></div>`;$$('[data-s]').forEach(b=>b.onclick=()=>assistFlow(side,b.dataset.s))}
 function assistFlow(side,scorer){let ps=sideP(side).filter(p=>p.player_id!==scorer);$('#modal').innerHTML=`<div class="modalBack"><div class="modal"><h3>Quem deu a assistência?</h3><div class="choice"><button data-a="">Sem assistência</button>${ps.map(p=>`<button data-a="${p.player_id}">${esc(p.players.name)}</button>`).join('')}</div></div></div>`;$$('[data-a]').forEach(b=>b.onclick=()=>regGoal(side,scorer,b.dataset.a||null))}
 async function regGoal(side,scorer,assist){let opp=side==='left'?'right':'left',keeper=gk(opp),sec=elapsed(S.active);await sb.from('match_events').insert({match_id:S.active.id,event_type:'goal',side,player_id:scorer,assist_player_id:assist,goalkeeper_id:keeper?.id||null,match_second:sec});let f=side==='left'?'left_score':'right_score',score=Number(S.active[f])+1;await sb.from('matches').update({[f]:score}).eq('id',S.active.id);$('#modal').innerHTML='';await refresh();if(score>=(S.settings?.goals_to_win||2))finish(true)}
 async function save(side){let keeper=gk(side);if(!keeper)return alert('Defina o goleiro.');await sb.from('match_events').insert({match_id:S.active.id,event_type:'save',side,player_id:keeper.id,goalkeeper_id:keeper.id,match_second:elapsed(S.active)});refresh()}
-async function toggleTimer(){let m=S.active;if(m.status==='scheduled'||m.status==='paused')await sb.from('matches').update({status:'live',started_at:new Date().toISOString(),paused_at:null}).eq('id',m.id);else await sb.from('matches').update({status:'paused',elapsed_before_pause_seconds:elapsed(m),started_at:null,paused_at:new Date().toISOString()}).eq('id',m.id);refresh()}
+async function toggleTimer(){
+ let m=S.active;
+ if(m.status==='scheduled'){
+   const {data:st}=await sb.from('goalkeeper_stints').select('id').eq('match_id',m.id).limit(1);
+   if(!st?.length){
+     for(const side of ['left','right']){
+       const kp=sideP(side).find(x=>x.is_goalkeeper);
+       if(kp)await sb.from('goalkeeper_stints').insert({match_id:m.id,side,player_id:kp.player_id,started_second:0});
+     }
+   }
+   await sb.from('matches').update({status:'live',started_at:new Date().toISOString(),paused_at:null}).eq('id',m.id);
+ }else if(m.status==='paused'){
+   await sb.from('matches').update({status:'live',started_at:new Date().toISOString(),paused_at:null}).eq('id',m.id);
+ }else{
+   await sb.from('matches').update({status:'paused',elapsed_before_pause_seconds:elapsed(m),started_at:null,paused_at:new Date().toISOString()}).eq('id',m.id);
+ }
+ refresh();
+}
 function swapGk(){let side=prompt('L para esquerdo ou R para direito','L')?.toUpperCase()==='R'?'right':'left',ps=sideP(side);let n=Number(prompt(ps.map((p,i)=>`${i+1}. ${p.players.name}`).join('\n')))-1;if(ps[n])changeGk(side,ps[n].player_id)}
-async function changeGk(side,pid){await sb.from('match_players').update({is_goalkeeper:false}).eq('match_id',S.active.id).eq('side',side);await sb.from('match_players').update({is_goalkeeper:true}).eq('match_id',S.active.id).eq('player_id',pid);await sb.from('match_events').insert({match_id:S.active.id,event_type:'goalkeeper_change',side,player_id:pid,goalkeeper_id:pid,match_second:elapsed(S.active)});refresh()}
+async function changeGk(side,pid){
+ const sec=elapsed(S.active),old=sideP(side).find(x=>x.is_goalkeeper);
+ if(old?.player_id===pid)return;
+ if(old)await sb.from('goalkeeper_stints').update({ended_second:sec}).eq('match_id',S.active.id).eq('player_id',old.player_id).is('ended_second',null);
+ await sb.from('match_players').update({is_goalkeeper:false}).eq('match_id',S.active.id).eq('side',side);
+ await sb.from('match_players').update({is_goalkeeper:true}).eq('match_id',S.active.id).eq('player_id',pid);
+ await sb.from('goalkeeper_stints').insert({match_id:S.active.id,side,player_id:pid,started_second:sec});
+ const sp=S.sp.find(x=>x.player_id===pid);if(sp)await sb.from('session_players').update({goalkeeper_turns:sp.goalkeeper_turns+1}).eq('id',sp.id);
+ await sb.from('match_events').insert({match_id:S.active.id,event_type:'goalkeeper_change',side,player_id:pid,goalkeeper_id:pid,match_second:sec,metadata:{from:old?.player_id||null,to:pid}});
+ refresh();
+}
 async function undo(){let ev=S.events.filter(x=>!x.voided).at(-1);if(!ev)return alert('Nada para desfazer.');await sb.from('match_events').update({voided:true,voided_at:new Date().toISOString()}).eq('id',ev.id);if(ev.event_type==='goal'){let f=ev.side==='left'?'left_score':'right_score';await sb.from('matches').update({[f]:Math.max(0,Number(S.active[f])-1)}).eq('id',S.active.id)}refresh()}
 async function finish(auto=false){let m=S.active,dur=Math.min(S.settings?.match_duration_seconds||420,elapsed(m));if(!auto&&!confirm('Encerrar a partida?'))return;if(m.left_score===m.right_score){let waiting=S.sp.filter(x=>x.status==='waiting').length,n=S.settings?.players_per_team||6;if(waiting>=n*(S.settings?.waiting_teams_for_double_exit||2))return finalize(null,dur,true);return penalties()}let win=m.left_score>m.right_score?'left':'right';finalize(win,dur,false)}
 function penalties(){let l=sideP('left'),r=sideP('right');$('#modal').innerHTML=`<div class="modalBack"><div class="modal"><h3>🥅 Pênaltis</h3><div class="grid g2"><div><h4>Esquerdo</h4>${l.map(p=>`<button class="btn ghost" style="width:100%;margin:3px" data-pen="left|${p.player_id}">${esc(p.players.name)}</button>`).join('')}</div><div><h4>Direito</h4>${r.map(p=>`<button class="btn ghost" style="width:100%;margin:3px" data-pen="right|${p.player_id}">${esc(p.players.name)}</button>`).join('')}</div></div><p><b>${S.active.left_penalty_score} × ${S.active.right_penalty_score}</b></p><button id="endp" class="btn primary">Encerrar disputa</button></div></div>`;$$('[data-pen]').forEach(b=>b.onclick=()=>penResult(...b.dataset.pen.split('|')));$('#endp').onclick=endPens}
 function penResult(side,shooter){$('#modal').innerHTML=`<div class="modalBack"><div class="modal"><h3>Resultado</h3><div class="choice"><button data-r="goal">⚽ Gol</button><button data-r="saved">🧤 Defesa</button><button data-r="missed">❌ Fora / trave</button></div></div></div>`;$$('[data-r]').forEach(b=>b.onclick=()=>savePen(side,shooter,b.dataset.r))}
 async function savePen(side,shooter,result){let keeper=gk(side==='left'?'right':'left');if(!keeper)return alert('Defina o goleiro adversário');await sb.from('penalties').insert({match_id:S.active.id,sequence_no:S.pens.length+1,side,shooter_id:shooter,goalkeeper_id:keeper.id,result});if(result==='goal'){let f=side==='left'?'left_penalty_score':'right_penalty_score';await sb.from('matches').update({[f]:Number(S.active[f])+1,decided_by_penalties:true}).eq('id',S.active.id)}else await sb.from('matches').update({decided_by_penalties:true}).eq('id',S.active.id);$('#modal').innerHTML='';await refresh();penalties()}
 async function endPens(){if(S.active.left_penalty_score===S.active.right_penalty_score)return alert('A disputa ainda está empatada.');let win=S.active.left_penalty_score>S.active.right_penalty_score?'left':'right';$('#modal').innerHTML='';finalize(win,Math.min(S.settings?.match_duration_seconds||420,elapsed(S.active)),false)}
-async function finalize(win,dur,both){let m=S.active,now=new Date().toISOString();await sb.from('matches').update({status:'finished',ended_at:now,duration_seconds:dur,winner_side:win,both_teams_exit:both}).eq('id',m.id);for(let p of S.mp){await sb.from('match_players').update({play_seconds:dur,line_seconds:p.is_goalkeeper?0:dur,goalkeeper_seconds:p.is_goalkeeper?dur:0,exited_at:now}).eq('id',p.id);let sp=S.sp.find(x=>x.player_id===p.player_id);if(sp)await sb.from('session_players').update({play_seconds:sp.play_seconds+dur,games_played:sp.games_played+1,consecutive_plays:sp.consecutive_plays+1,consecutive_waits:0,status:'waiting'}).eq('id',sp.id)}for(let sp of S.sp.filter(x=>x.status==='waiting'))await sb.from('session_players').update({waiting_seconds:sp.waiting_seconds+dur,games_waited:sp.games_waited+1,consecutive_waits:sp.consecutive_waits+1,consecutive_plays:0}).eq('id',sp.id);await refresh(false);await nextMatch(win,both);await refresh();S.tab='queue';render()}
-async function nextMatch(win,both){let n=S.settings?.players_per_team||6;if(both){let q=pri();if(q.length<n*2)return;return createNext(q.slice(0,n).map(x=>x.player_id),q.slice(n,n*2).map(x=>x.player_id))}let keep=S.mp.filter(x=>x.side===win).map(x=>x.player_id),q=pri().filter(x=>!keep.includes(x.player_id)),incoming=q.slice(0,n).map(x=>x.player_id);if(incoming.length<n){let loser=win==='left'?'right':'left',cand=S.mp.filter(x=>x.side===loser&&!incoming.includes(x.player_id)).map(x=>({id:x.player_id,play:S.sp.find(s=>s.player_id===x.player_id)?.play_seconds||0})).sort((a,b)=>a.play-b.play);while(incoming.length<n&&cand.length)incoming.push(cand.shift().id)}if(keep.length===n&&incoming.length===n)return createNext(keep,incoming)}
-async function createNext(left,right){let seq=Math.max(0,...S.matches.map(x=>x.sequence_no))+1,r=await sb.from('matches').insert({session_id:S.session.id,sequence_no:seq,status:'scheduled'}).select().single(),m=r.data;await sb.from('match_players').insert([...left.map(id=>({match_id:m.id,player_id:id,side:'left'})),...right.map(id=>({match_id:m.id,player_id:id,side:'right'}))]);await sb.from('session_players').update({status:'playing'}).in('player_id',[...left,...right]).eq('session_id',S.session.id);await refresh(false);for(let side of ['left','right']){let ids=side==='left'?left:right,g=S.sp.filter(x=>ids.includes(x.player_id)&&x.players.can_play_goalkeeper).sort((a,b)=>a.goalkeeper_turns-b.goalkeeper_turns)[0];if(g){await sb.from('match_players').update({is_goalkeeper:true}).eq('match_id',m.id).eq('player_id',g.player_id);await sb.from('session_players').update({goalkeeper_turns:g.goalkeeper_turns+1}).eq('id',g.id)}}}
+async function finalize(win,dur,both){
+ const m=S.active,roster=[...S.mp],sessionRows=[...S.sp],waitingBefore=sessionRows.filter(x=>x.status==='waiting').sort((a,b)=>b.waiting_seconds-a.waiting_seconds||a.play_seconds-b.play_seconds||b.consecutive_waits-a.consecutive_waits||new Date(a.arrived_at)-new Date(b.arrived_at));
+ const leftIds=roster.filter(x=>x.side==='left').map(x=>x.player_id),rightIds=roster.filter(x=>x.side==='right').map(x=>x.player_id),now=new Date().toISOString();
+ await sb.from('goalkeeper_stints').update({ended_second:dur}).eq('match_id',m.id).is('ended_second',null);
+ const {data:stints}=await sb.from('goalkeeper_stints').select('*').eq('match_id',m.id);
+ const gkSecs={};for(const st of (stints||[])){gkSecs[st.player_id]=(gkSecs[st.player_id]||0)+Math.max(0,Number(st.ended_second??dur)-Number(st.started_second||0))}
+ await sb.from('matches').update({status:'finished',ended_at:now,duration_seconds:dur,winner_side:win,both_teams_exit:both,started_at:null,paused_at:null,elapsed_before_pause_seconds:dur}).eq('id',m.id);
+ for(const p of roster){
+   const gs=Math.min(dur,gkSecs[p.player_id]||0),ls=Math.max(0,dur-gs),sp=sessionRows.find(x=>x.player_id===p.player_id);
+   await sb.from('match_players').update({play_seconds:dur,line_seconds:ls,goalkeeper_seconds:gs,exited_at:now}).eq('id',p.id);
+   if(sp){
+     const stays=!both&&p.side===win;
+     await sb.from('session_players').update({
+       play_seconds:sp.play_seconds+dur,line_seconds:sp.line_seconds+ls,goalkeeper_seconds:sp.goalkeeper_seconds+gs,
+       games_played:sp.games_played+1,consecutive_plays:sp.consecutive_plays+1,consecutive_waits:0,status:stays?'playing':'waiting'
+     }).eq('id',sp.id);
+   }
+ }
+ for(const sp of waitingBefore){
+   await sb.from('session_players').update({waiting_seconds:sp.waiting_seconds+dur,games_waited:sp.games_waited+1,consecutive_waits:sp.consecutive_waits+1,consecutive_plays:0}).eq('id',sp.id);
+ }
+ const n=S.settings?.players_per_team||6;
+ if(both){
+   const q=waitingBefore;
+   if(q.length>=n*2)await createNext(q.slice(0,n).map(x=>x.player_id),q.slice(n,n*2).map(x=>x.player_id),false);
+ }else{
+   const keep=win==='left'?leftIds:rightIds,losers=win==='left'?rightIds:leftIds;
+   let incoming=waitingBefore.slice(0,n).map(x=>x.player_id);
+   if(incoming.length<n){
+     const candidates=losers.map(id=>sessionRows.find(x=>x.player_id===id)).filter(Boolean).sort((a,b)=>a.play_seconds-b.play_seconds||a.goalkeeper_seconds-b.goalkeeper_seconds);
+     for(const x of candidates){if(incoming.length>=n)break;if(!incoming.includes(x.player_id))incoming.push(x.player_id)}
+   }
+   if(keep.length===n&&incoming.length===n){
+     if(win==='left')await createNext(keep,incoming,true);else await createNext(incoming,keep,true);
+   }
+ }
+ await refresh();S.tab='queue';render();
+}
+async function createNext(left,right,markReuse=false){
+ let seq=Math.max(0,...S.matches.map(x=>x.sequence_no))+1,r=await sb.from('matches').insert({session_id:S.session.id,sequence_no:seq,status:'scheduled'}).select().single(),m=r.data;
+ const prevIds=new Set(S.mp.map(x=>x.player_id));
+ await sb.from('match_players').insert([...left.map(id=>({match_id:m.id,player_id:id,side:'left',reused_from_loser:markReuse&&prevIds.has(id)})),...right.map(id=>({match_id:m.id,player_id:id,side:'right',reused_from_loser:markReuse&&prevIds.has(id)}))]);
+ await sb.from('session_players').update({status:'playing'}).in('player_id',[...left,...right]).eq('session_id',S.session.id);
+ const {data:rows}=await sb.from('session_players').select('*,players(*)').eq('session_id',S.session.id);
+ for(const side of ['left','right']){
+   const ids=side==='left'?left:right,g=(rows||[]).filter(x=>ids.includes(x.player_id)&&x.players.can_play_goalkeeper).sort((a,b)=>a.goalkeeper_turns-b.goalkeeper_turns||a.goalkeeper_seconds-b.goalkeeper_seconds)[0];
+   if(g){
+     await sb.from('match_players').update({is_goalkeeper:true}).eq('match_id',m.id).eq('player_id',g.player_id);
+     await sb.from('session_players').update({goalkeeper_turns:g.goalkeeper_turns+1}).eq('id',g.id);
+   }
+ }
+}
 async function judgeAccess(){let raw=crypto.getRandomValues(new Uint8Array(8)),token=[...raw].map(x=>x.toString(36)).join('').slice(0,12),buf=await crypto.subtle.digest('SHA-256',new TextEncoder().encode(token)),hash=[...new Uint8Array(buf)].map(b=>b.toString(16).padStart(2,'0')).join('');await sb.from('judge_sessions').insert({match_id:S.active.id,token_hash:hash,expires_at:new Date(Date.now()+10800000).toISOString()});let u=location.origin+location.pathname+'?judge='+token;await navigator.clipboard?.writeText(u);alert('Link do juiz copiado. Expira em 3 horas.')}
 function cash(){let d=S.cash.filter(x=>x.session_id===S.session.id),inc=d.filter(x=>x.entry_type==='income').reduce((a,b)=>a+Number(b.amount),0),exp=d.filter(x=>x.entry_type==='expense').reduce((a,b)=>a+Number(b.amount),0),tot=S.cash.reduce((a,b)=>a+(b.entry_type==='income'?Number(b.amount):-Number(b.amount)),0);$('#content').innerHTML=`<div class="grid g3"><div class="card"><div class="muted">Entradas hoje</div><div class="big">${fmt(inc)}</div></div><div class="card"><div class="muted">Despesas hoje</div><div class="big">${fmt(exp)}</div></div><div class="card"><div class="muted">Caixa acumulado</div><div class="big">${fmt(tot)}</div></div></div><div class="card" style="margin-top:10px"><div class="spread"><h3>Movimentações</h3><button id="ex" class="btn primary">+ Despesa</button></div><div class="list">${d.map(x=>`<div class="item spread"><b>${esc(x.description)}</b><b>${x.entry_type==='expense'?'-':'+'}${fmt(x.amount)}</b></div>`).join('')||'<div class="empty">Sem movimentações.</div>'}</div></div>`;$('#ex').onclick=async()=>{let desc=prompt('Descrição','Campo'),val=Number(prompt('Valor','250')||0);if(desc&&val>0){await sb.from('cash_entries').insert({session_id:S.session.id,owner_id:S.user.id,entry_type:'expense',description:desc,amount:val});refresh()}}}
 async function rank(){let{data}=await sb.from('player_career_stats').select('*').eq('owner_id',S.user.id);let a=(data||[]).sort((x,y)=>Number(y.goals)-Number(x.goals)||Number(y.assists)-Number(x.assists));$('#content').innerHTML=`<div class="card"><h3>Ranking consolidado</h3><p class="muted">A Nota do Dia fica separada.</p></div><div class="list" style="margin-top:10px">${a.map((x,i)=>`<div class="item spread"><div><b>${i+1}. ${esc(x.name)}</b><div class="muted">${x.matches} jogos · ${tsec(x.play_seconds)}</div></div><div>⚽ ${x.goals} · 🎯 ${x.assists} · 🧤 ${x.saves}</div></div>`).join('')||'<div class="card empty">Sem estatísticas ainda.</div>'}</div>`}
