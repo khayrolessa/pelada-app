@@ -327,12 +327,40 @@ async function changeGk(side,pid){
  await sb.from('match_events').insert({match_id:S.active.id,event_type:'goalkeeper_change',side,player_id:pid,goalkeeper_id:pid,match_second:sec,metadata:{from:old?.player_id||null,to:pid}});
  refresh();
 }
-async function undo(){let ev=S.events.filter(x=>!x.voided).at(-1);if(!ev)return alert('Nada para desfazer.');await sb.from('match_events').update({voided:true,voided_at:new Date().toISOString()}).eq('id',ev.id);if(ev.event_type==='goal'){let f=ev.side==='left'?'left_score':'right_score';await sb.from('matches').update({[f]:Math.max(0,Number(S.active[f])-1)}).eq('id',S.active.id)}refresh()}
-async function finish(auto=false){let m=S.active,dur=Math.min(S.settings?.match_duration_seconds||420,elapsed(m));if(!auto&&!confirm('Encerrar a partida?'))return;if(m.left_score===m.right_score){let waiting=S.sp.filter(x=>x.status==='waiting').length,n=S.settings?.players_per_team||6;if(waiting>=n*(S.settings?.waiting_teams_for_double_exit||2))return finalize(null,dur,true);return penalties()}let win=m.left_score>m.right_score?'left':'right';finalize(win,dur,false)}
+async function undo(){
+ const lastE=S.events.filter(x=>!x.voided).at(-1),lastP=S.pens.filter(x=>!x.voided).at(-1);
+ if(!lastE&&!lastP)return alert('Nada para desfazer.');
+ const eTime=lastE?new Date(lastE.occurred_at).getTime():0,pTime=lastP?new Date(lastP.created_at).getTime():0;
+ const desc=lastP&&pTime>eTime?'o último pênalti':lastE?.event_type==='goal'?'o último gol':lastE?.event_type==='save'?'a última defesa':lastE?.event_type==='goalkeeper_change'?'a última troca de goleiro':'o último evento';
+ const ok=await confirmAction('Desfazer alteração?',`Deseja realmente desfazer ${desc}?`,'OK');if(!ok)return;
+ if(lastP&&pTime>eTime){
+   await sb.from('penalties').update({voided:true}).eq('id',lastP.id);
+   if(lastP.result==='goal'){const fld=lastP.side==='left'?'left_penalty_score':'right_penalty_score';await sb.from('matches').update({[fld]:Math.max(0,Number(S.active[fld])-1)}).eq('id',S.active.id)}
+ }else if(lastE){
+   await sb.from('match_events').update({voided:true,voided_at:new Date().toISOString()}).eq('id',lastE.id);
+   if(lastE.event_type==='goal'){const fld=lastE.side==='left'?'left_score':'right_score';await sb.from('matches').update({[fld]:Math.max(0,Number(S.active[fld])-1)}).eq('id',S.active.id)}
+   if(lastE.event_type==='goalkeeper_change'){
+     const from=lastE.metadata?.from,to=lastE.metadata?.to;
+     if(to)await sb.from('match_players').update({is_goalkeeper:false}).eq('match_id',S.active.id).eq('player_id',to);
+     if(from)await sb.from('match_players').update({is_goalkeeper:true}).eq('match_id',S.active.id).eq('player_id',from);
+   }
+ }
+ refresh();
+}
+async function finish(auto=false){
+ let m=S.active,dur=Math.min(S.settings?.match_duration_seconds||420,elapsed(m));
+ if(!auto){const ok=await confirmAction('Encerrar partida?','Isso fecha a partida atual e inicia a lógica de transição para a próxima formação.','OK');if(!ok)return}
+ if(m.left_score===m.right_score){
+   let waiting=S.sp.filter(x=>x.status==='waiting').length,n=S.settings?.players_per_team||6;
+   if(waiting>=n*(S.settings?.waiting_teams_for_double_exit||2))return finalize(null,dur,true);
+   return penalties();
+ }
+ let win=m.left_score>m.right_score?'left':'right';finalize(win,dur,false);
+}
 function penalties(){let l=sideP('left'),r=sideP('right');$('#modal').innerHTML=`<div class="modalBack"><div class="modal"><h3>🥅 Pênaltis</h3><div class="grid g2"><div><h4>Esquerdo</h4>${l.map(p=>`<button class="btn ghost" style="width:100%;margin:3px" data-pen="left|${p.player_id}">${esc(p.players.name)}</button>`).join('')}</div><div><h4>Direito</h4>${r.map(p=>`<button class="btn ghost" style="width:100%;margin:3px" data-pen="right|${p.player_id}">${esc(p.players.name)}</button>`).join('')}</div></div><p><b>${S.active.left_penalty_score} × ${S.active.right_penalty_score}</b></p><button id="endp" class="btn primary">Encerrar disputa</button></div></div>`;$$('[data-pen]').forEach(b=>b.onclick=()=>penResult(...b.dataset.pen.split('|')));$('#endp').onclick=endPens}
 function penResult(side,shooter){$('#modal').innerHTML=`<div class="modalBack"><div class="modal"><h3>Resultado</h3><div class="choice"><button data-r="goal">⚽ Gol</button><button data-r="saved">🧤 Defesa</button><button data-r="missed">❌ Fora / trave</button></div></div></div>`;$$('[data-r]').forEach(b=>b.onclick=()=>savePen(side,shooter,b.dataset.r))}
 async function savePen(side,shooter,result){let keeper=gk(side==='left'?'right':'left');if(!keeper)return alert('Defina o goleiro adversário');await sb.from('penalties').insert({match_id:S.active.id,sequence_no:S.pens.length+1,side,shooter_id:shooter,goalkeeper_id:keeper.id,result});if(result==='goal'){let f=side==='left'?'left_penalty_score':'right_penalty_score';await sb.from('matches').update({[f]:Number(S.active[f])+1,decided_by_penalties:true}).eq('id',S.active.id)}else await sb.from('matches').update({decided_by_penalties:true}).eq('id',S.active.id);$('#modal').innerHTML='';await refresh();penalties()}
-async function endPens(){if(S.active.left_penalty_score===S.active.right_penalty_score)return alert('A disputa ainda está empatada.');let win=S.active.left_penalty_score>S.active.right_penalty_score?'left':'right';$('#modal').innerHTML='';finalize(win,Math.min(S.settings?.match_duration_seconds||420,elapsed(S.active)),false)}
+async function endPens(){if(S.active.left_penalty_score===S.active.right_penalty_score)return alert('A disputa ainda está empatada.');const ok=await confirmAction('Encerrar disputa de pênaltis?','O resultado será usado para definir quem permanece na próxima partida.','OK');if(!ok)return;let win=S.active.left_penalty_score>S.active.right_penalty_score?'left':'right';$('#modal').innerHTML='';finalize(win,Math.min(S.settings?.match_duration_seconds||420,elapsed(S.active)),false)}
 async function finalize(win,dur,both){
  const m=S.active,roster=[...S.mp],sessionRows=[...S.sp],waitingBefore=sessionRows.filter(x=>x.status==='waiting').sort((a,b)=>b.waiting_seconds-a.waiting_seconds||a.play_seconds-b.play_seconds||b.consecutive_waits-a.consecutive_waits||new Date(a.arrived_at)-new Date(b.arrived_at));
  const leftIds=roster.filter(x=>x.side==='left').map(x=>x.player_id),rightIds=roster.filter(x=>x.side==='right').map(x=>x.player_id),now=new Date().toISOString();
