@@ -303,8 +303,8 @@ function sideP(side){return S.mp.filter(x=>x.side===side&&!x.exited_at)}function
 function judge(){
  if(!S.active)return $('#content').innerHTML='<div class="card empty">Nenhuma partida ativa. Vá até Fila e forme a partida.</div>';
  let m=S.active,max=S.settings?.match_duration_seconds||420,rem=Math.max(0,max-elapsed(m)),tm=side=>sideP(side).map(x=>`<div class="player ${x.is_goalkeeper?'gk':''}">${x.is_goalkeeper?'🧤':'⚽'} ${esc(x.players.name)}</div>`).join(''),missing=side=>!sideP(side).some(x=>x.is_goalkeeper);
- $('#content').innerHTML=`<div class="score"><div class="clock" id="clock">${tsec(rem)}</div><div class="scoreline">${m.left_score} × ${m.right_score}</div><div class="teams"><div class="team"><h4 style="font-size:18px">⬅️ TIME ESQUERDO</h4>${missing('left')?'<div class="pill">⚠️ Goleiro não definido</div>':''}${tm('left')}<div class="gameBtns"><button class="btn primary" data-goal="left">⚽ Gol</button><button class="btn blue" data-save="left">🧤 Defesa</button></div></div><div class="team"><h4 style="font-size:18px;text-align:right">TIME DIREITO ➡️</h4>${missing('right')?'<div class="pill">⚠️ Goleiro não definido</div>':''}${tm('right')}<div class="gameBtns"><button class="btn primary" data-goal="right">⚽ Gol</button><button class="btn blue" data-save="right">🧤 Defesa</button></div></div></div><div class="row" style="margin-top:10px"><button id="start" class="btn amber">${m.status==='scheduled'?'▶ Iniciar':m.status==='paused'?'▶ Retomar':'⏸ Pausar'}</button><button id="swap" class="btn">🔄 Trocar goleiro</button>${m.status==='scheduled'?'<button id="lineup" class="btn">✏️ Ajustar escalação</button>':''}<button id="undo" class="btn red">↩ Desfazer</button><button id="end" class="btn ghost">🏁 Encerrar</button><button id="share" class="btn ghost">📱 Acesso juiz</button></div></div><div class="card" style="margin-top:10px"><h3>Súmula</h3>${S.events.filter(x=>!x.voided).slice().reverse().map(e=>`<div>${e.event_type==='goal'?'⚽ Gol':e.event_type==='save'?'🧤 Defesa':'🔄 '+e.event_type} · ${tsec(e.match_second||0)}</div>`).join('')||'<div class="empty">Sem eventos.</div>'}</div>`;
- $$('[data-goal]').forEach(b=>b.onclick=()=>goalFlow(b.dataset.goal));$$('[data-save]').forEach(b=>b.onclick=()=>save(b.dataset.save));$('#start').onclick=toggleTimer;$('#swap').onclick=swapGk;$('#lineup')?.addEventListener('click',adjustLineup);$('#undo').onclick=undo;$('#end').onclick=finish;$('#share').onclick=judgeAccess;
+ $('#content').innerHTML=`<div class="score"><div class="clock" id="clock">${tsec(rem)}</div><div class="scoreline">${m.left_score} × ${m.right_score}</div><div class="teams"><div class="team"><h4 style="font-size:18px">⬅️ TIME ESQUERDO</h4>${missing('left')?'<div class="pill">⚠️ Goleiro não definido</div>':''}${tm('left')}<div class="gameBtns"><button class="btn primary" data-goal="left">⚽ Gol</button><button class="btn blue" data-save="left">🧤 Defesa</button></div></div><div class="team"><h4 style="font-size:18px;text-align:right">TIME DIREITO ➡️</h4>${missing('right')?'<div class="pill">⚠️ Goleiro não definido</div>':''}${tm('right')}<div class="gameBtns"><button class="btn primary" data-goal="right">⚽ Gol</button><button class="btn blue" data-save="right">🧤 Defesa</button></div></div></div><div class="row" style="margin-top:10px"><button id="start" class="btn amber">${m.status==='scheduled'?'▶ Iniciar':m.status==='paused'?'▶ Retomar':'⏸ Pausar'}</button><button id="swap" class="btn">🔄 Trocar goleiro</button>${m.status==='scheduled'?'<button id="lineup" class="btn">✏️ Ajustar escalação</button>':'<button id="substitute" class="btn">🔁 Substituir jogador</button>'}<button id="undo" class="btn red">↩ Desfazer</button><button id="end" class="btn ghost">🏁 Encerrar</button><button id="share" class="btn ghost">📱 Acesso juiz</button></div></div><div class="card" style="margin-top:10px"><h3>Súmula</h3>${S.events.filter(x=>!x.voided).slice().reverse().map(e=>`<div>${e.event_type==='goal'?'⚽ Gol':e.event_type==='save'?'🧤 Defesa':'🔄 '+e.event_type} · ${tsec(e.match_second||0)}</div>`).join('')||'<div class="empty">Sem eventos.</div>'}</div>`;
+ $$('[data-goal]').forEach(b=>b.onclick=()=>goalFlow(b.dataset.goal));$$('[data-save]').forEach(b=>b.onclick=()=>save(b.dataset.save));$('#start').onclick=toggleTimer;$('#swap').onclick=swapGk;$('#lineup')?.addEventListener('click',adjustLineup);$('#substitute')?.addEventListener('click',midMatchSubstitution);$('#undo').onclick=undo;$('#end').onclick=finish;$('#share').onclick=judgeAccess;
  clearInterval(S.timer);let autoEnded=false;S.timer=setInterval(()=>{let c=$('#clock'),left=Math.max(0,max-elapsed(S.active));if(c)c.textContent=tsec(left);if(left<=0&&S.active?.status==='live'&&!autoEnded){autoEnded=true;finish(true)}},1000);
 }
 function goalFlow(side){let ps=sideP(side);$('#modal').innerHTML=`<div class="modalBack"><div class="modal"><h3>Quem marcou?</h3><div class="choice">${ps.map(p=>`<button data-s="${p.player_id}">${esc(p.players.name)}</button>`).join('')}</div></div></div>`;$$('[data-s]').forEach(b=>b.onclick=()=>assistFlow(side,b.dataset.s))}
@@ -351,6 +351,56 @@ async function adjustLineup(){
  const outSp=S.sp.find(x=>x.player_id===out.player_id);
  if(outSp)await sb.from('session_players').update({status:'waiting',voluntarily_resting:false,left_at:null}).eq('id',outSp.id);
  await sb.from('session_players').update({status:'playing',voluntarily_resting:false,left_at:null}).eq('id',inn.id);
+ await refresh();
+}
+async function midMatchSubstitution(){
+ if(!S.active||!['live','paused'].includes(S.active.status))return;
+ const waiting=pri();
+ if(!waiting.length)return alert('Não há ninguém disponível na fila para entrar.');
+ const side=await chooseSideAction('Qual time fará a substituição?',sideP('left'),sideP('right'),'Escolha visualmente o time.');
+ if(!side)return;
+ const current=sideP(side);
+ const outId=await choosePlayerAction('Quem vai sair?',current,'Esse jogador sairá da pelada de hoje após a substituição.');
+ if(!outId)return;
+ const innId=await choosePlayerAction('Quem entra da fila?',waiting,'Escolha o jogador que entrará agora.');
+ if(!innId)return;
+ const out=current.find(x=>x.player_id===outId),inn=waiting.find(x=>x.player_id===innId);
+ if(!out||!inn)return;
+ const sec=Math.max(0,Math.min(S.settings?.match_duration_seconds||420,elapsed(S.active)));
+ let newGkId=null;
+ if(out.is_goalkeeper){
+   let choices=[...current.filter(x=>x.player_id!==out.player_id),{player_id:inn.player_id,players:inn.players}].filter(x=>x.players?.can_play_goalkeeper);
+   if(!choices.length)return alert('A substituição retiraria o goleiro e não há outro jogador habilitado para ir ao gol neste time.');
+   newGkId=await choosePlayerAction('Quem ficará no gol?',choices,'O jogador que está saindo é o goleiro. Escolha o novo goleiro antes de confirmar.');
+   if(!newGkId)return;
+ }
+ const ok=await confirmAction('Confirmar substituição?',`${out.players.name} sairá da pelada de hoje e ${inn.players.name} entrará faltando ${tsec(Math.max(0,(S.settings?.match_duration_seconds||420)-sec))}.${out.is_goalkeeper?' O novo goleiro também será definido.':''}`,'OK');
+ if(!ok)return;
+ const now=new Date().toISOString();
+ if(out.is_goalkeeper){
+   await sb.from('goalkeeper_stints').update({ended_second:sec}).eq('match_id',S.active.id).eq('player_id',out.player_id).is('ended_second',null);
+ }
+ await sb.from('match_players').update({exited_at:now,exited_second:sec,is_goalkeeper:false}).eq('id',out.id);
+ const ins=await sb.from('match_players').insert({match_id:S.active.id,player_id:inn.player_id,side,entered_at:now,entered_second:sec,is_goalkeeper:false}).select().single();
+ if(ins.error)return alert(ins.error.message);
+ const innSp=S.sp.find(x=>x.player_id===inn.player_id),outSp=S.sp.find(x=>x.player_id===out.player_id);
+ if(outSp)await sb.from('session_players').update({status:'left',left_at:now,voluntarily_resting:false}).eq('id',outSp.id);
+ if(innSp)await sb.from('session_players').update({
+   status:'playing',voluntarily_resting:false,left_at:null,
+   waiting_seconds:Number(innSp.waiting_seconds||0)+sec,consecutive_waits:0
+ }).eq('id',innSp.id);
+ await sb.from('match_events').insert([
+   {match_id:S.active.id,event_type:'player_out',side,player_id:out.player_id,match_second:sec,metadata:{reason:'left_pelada'}},
+   {match_id:S.active.id,event_type:'player_in',side,player_id:inn.player_id,match_second:sec,metadata:{replaced_player_id:out.player_id}}
+ ]);
+ if(out.is_goalkeeper&&newGkId){
+   await sb.from('match_players').update({is_goalkeeper:false}).eq('match_id',S.active.id).eq('side',side).is('exited_at',null);
+   await sb.from('match_players').update({is_goalkeeper:true}).eq('match_id',S.active.id).eq('player_id',newGkId).is('exited_at',null);
+   await sb.from('goalkeeper_stints').insert({match_id:S.active.id,side,player_id:newGkId,started_second:sec});
+   const newGkSp=S.sp.find(x=>x.player_id===newGkId);
+   if(newGkSp)await sb.from('session_players').update({goalkeeper_turns:Number(newGkSp.goalkeeper_turns||0)+1}).eq('id',newGkSp.id);
+   await sb.from('match_events').insert({match_id:S.active.id,event_type:'goalkeeper_change',side,player_id:newGkId,goalkeeper_id:newGkId,match_second:sec,metadata:{from:out.player_id,to:newGkId}});
+ }
  await refresh();
 }
 async function swapGk(){
