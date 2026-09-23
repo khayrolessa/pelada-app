@@ -24,7 +24,7 @@ const URL='https://jgbsvlkcuklbciyyrmxq.supabase.co', KEY='sb_publishable_8vHIDc
 const sb=createClient(URL,KEY), $=s=>document.querySelector(s), $$=s=>[...document.querySelectorAll(s)];
 const fmt=n=>new Intl.NumberFormat('pt-BR',{style:'currency',currency:'BRL'}).format(Number(n||0));
 const esc=s=>(s??'').toString().replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
-const today=()=>new Date().toISOString().slice(0,10), tsec=s=>{s=Math.max(0,Math.floor(s||0));return String(Math.floor(s/60)).padStart(2,'0')+':'+String(s%60).padStart(2,'0')};
+const isoToday=()=>new Date().toISOString().slice(0,10), tsec=s=>{s=Math.max(0,Math.floor(s||0));return String(Math.floor(s/60)).padStart(2,'0')+':'+String(s%60).padStart(2,'0')};
 let S={user:null,settings:null,session:null,players:[],sp:[],payments:[],cash:[],matches:[],active:null,mp:[],events:[],pens:[],tab:'today',timer:null};
 const judgeToken=new URLSearchParams(location.search).get('judge');
 
@@ -42,8 +42,8 @@ function login(){
 }
 async function load(){
  let uid=S.user.id,{data:set}=await sb.from('app_settings').select('*').eq('owner_id',uid).maybeSingle();S.settings=set;
- let {data:s}=await sb.from('sessions').select('*').eq('owner_id',uid).eq('session_date',today()).maybeSingle();
- if(!s){let r=await sb.from('sessions').insert({owner_id:uid,session_date:today()}).select().single();s=r.data}S.session=s;
+ let {data:s}=await sb.from('sessions').select('*').eq('owner_id',uid).eq('session_date',isoToday()).maybeSingle();
+ if(!s){let r=await sb.from('sessions').insert({owner_id:uid,session_date:isoToday()}).select().single();s=r.data}S.session=s;
  await refresh(false);shell();
  sb.channel('pelada').on('postgres_changes',{event:'*',schema:'public'},()=>refresh()).subscribe();
 }
