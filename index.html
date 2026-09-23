@@ -25,7 +25,7 @@ const sb=createClient(URL,KEY), $=s=>document.querySelector(s), $$=s=>[...docume
 const fmt=n=>new Intl.NumberFormat('pt-BR',{style:'currency',currency:'BRL'}).format(Number(n||0));
 const esc=s=>(s??'').toString().replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const isoToday=()=>new Date().toISOString().slice(0,10), tsec=s=>{s=Math.max(0,Math.floor(s||0));return String(Math.floor(s/60)).padStart(2,'0')+':'+String(s%60).padStart(2,'0')};
-let S={user:null,settings:null,session:null,players:[],sp:[],payments:[],cash:[],matches:[],active:null,mp:[],events:[],pens:[],tab:'today',timer:null};
+let S={user:null,settings:null,session:null,players:[],sp:[],payments:[],cash:[],matches:[],active:null,mp:[],events:[],pens:[],prevMatch:null,prevMp:[],tab:'today',timer:null};
 const judgeToken=new URLSearchParams(location.search).get('judge');
 if('serviceWorker' in navigator) navigator.serviceWorker.register('./sw.js').catch(()=>{});
 
@@ -75,10 +75,13 @@ async function refresh(draw=true){
  sb.from('cash_entries').select('*').eq('owner_id',S.user.id).order('occurred_at',{ascending:false}),
  sb.from('matches').select('*').eq('session_id',sid).order('sequence_no',{ascending:false})]);
  S.players=p.data||[];S.sp=sp.data||[];S.payments=pay.data||[];S.cash=cash.data||[];S.matches=mt.data||[];S.active=S.matches.find(m=>['scheduled','live','paused'].includes(m.status))||null;
- if(S.active){let[a,b,c]=await Promise.all([
+ if(S.active){let[a,b,cq]=await Promise.all([
  sb.from('match_players').select('*,players(*)').eq('match_id',S.active.id),
  sb.from('match_events').select('*').eq('match_id',S.active.id).order('occurred_at'),
- sb.from('penalties').select('*').eq('match_id',S.active.id).eq('voided',false).order('sequence_no')]);S.mp=a.data||[];S.events=b.data||[];S.pens=c.data||[]}else{S.mp=[];S.events=[];S.pens=[]}
+ sb.from('penalties').select('*').eq('match_id',S.active.id).eq('voided',false).order('sequence_no')]);S.mp=a.data||[];S.events=b.data||[];S.pens=cq.data||[];
+ S.prevMatch=S.matches.filter(x=>x.status==='finished'&&x.sequence_no<S.active.sequence_no).sort((x,y)=>y.sequence_no-x.sequence_no)[0]||null;
+ if(S.prevMatch){let{data:pm}=await sb.from('match_players').select('*,players(*)').eq('match_id',S.prevMatch.id);S.prevMp=pm||[]}else S.prevMp=[];
+ }else{S.mp=[];S.events=[];S.pens=[];S.prevMatch=null;S.prevMp=[]}
  if(draw)render();
 }
 function shell(){
