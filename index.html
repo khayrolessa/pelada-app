@@ -97,8 +97,28 @@ function settingsModal(){
 }
 function today(){
  let paid=S.payments.filter(x=>x.status==='paid').reduce((a,b)=>a+Number(b.amount),0),exp=S.cash.filter(x=>x.entry_type==='expense'&&x.session_id===S.session.id).reduce((a,b)=>a+Number(b.amount),0);
- $('#content').innerHTML=`<div class="grid g3"><div class="card"><div class="muted">Presentes</div><div class="big">${S.sp.filter(x=>x.status!=='left').length}</div></div><div class="card"><div class="muted">Partidas</div><div class="big">${S.matches.filter(x=>x.status==='finished').length}</div></div><div class="card"><div class="muted">Saldo do dia</div><div class="big">${fmt(paid-exp)}</div></div></div><div class="card" style="margin-top:12px"><h3>Pelada de hoje</h3><p class="muted">Começa zerada. Só entra o que for registrado.</p><div class="row"><button class="btn primary" id="p1">+ Jogador</button><button class="btn blue" id="p2">Fila</button><button class="btn" id="p3">Juiz</button></div></div>`;
- $('#p1').onclick=()=>{S.tab='players';render()};$('#p2').onclick=()=>{S.tab='queue';render()};$('#p3').onclick=()=>{S.tab='judge';render()};
+ $('#content').innerHTML=`<div class="grid g3"><div class="card"><div class="muted">Presentes</div><div class="big">${S.sp.filter(x=>x.status!=='left').length}</div></div><div class="card"><div class="muted">Partidas</div><div class="big">${S.matches.filter(x=>x.status==='finished').length}</div></div><div class="card"><div class="muted">Saldo do dia</div><div class="big">${fmt(paid-exp)}</div></div></div><div class="card" style="margin-top:12px"><h3>Pelada de hoje</h3><p class="muted">Começa zerada. Só entra o que for registrado.</p><div class="row"><button class="btn primary" id="p1">+ Jogador</button><button class="btn blue" id="p2">Fila</button><button class="btn" id="p3">Juiz</button><button class="btn amber" id="p4">🔥 Destaques</button></div></div>`;
+ $('#p1').onclick=()=>{S.tab='players';render()};$('#p2').onclick=()=>{S.tab='queue';render()};$('#p3').onclick=()=>{S.tab='judge';render()};$('#p4').onclick=dailyHighlights;
+}
+async function dailyHighlights(){
+ const finished=S.matches.filter(m=>m.status==='finished'),ids=finished.map(m=>m.id);if(!ids.length)return alert('Ainda não há partida encerrada hoje.');
+ const [er,pr,mpr]=await Promise.all([
+  sb.from('match_events').select('*').in('match_id',ids).eq('voided',false),
+  sb.from('penalties').select('*').in('match_id',ids).eq('voided',false),
+  sb.from('match_players').select('match_id,player_id,side').in('match_id',ids)
+ ]);
+ const names=Object.fromEntries(S.players.map(p=>[p.id,p.name])),stats={};
+ const get=id=>stats[id]||(stats[id]={id,name:names[id]||'Jogador',goals:0,assists:0,saves:0,penGoals:0,penSaves:0,wins:0,points:0,rating:0});
+ for(const e of (er.data||[])){if(e.event_type==='goal'){get(e.player_id).goals++;if(e.assist_player_id)get(e.assist_player_id).assists++}if(e.event_type==='save'&&e.goalkeeper_id)get(e.goalkeeper_id).saves++}
+ for(const p of (pr.data||[])){if(p.result==='goal')get(p.shooter_id).penGoals++;if(p.result==='saved')get(p.goalkeeper_id).penSaves++}
+ const byMatch={};for(const mp of (mpr.data||[]))(byMatch[mp.match_id]||(byMatch[mp.match_id]=[])).push(mp);
+ for(const m of finished)if(m.winner_side)for(const mp of (byMatch[m.id]||[]))if(mp.side===m.winner_side)get(mp.player_id).wins++;
+ const w=S.settings?.daily_rating_weights||{goal:2,assist:1.2,win:.6,save:.18,penalty_goal:.5,penalty_save:1};
+ const arr=Object.values(stats);for(const x of arr){x.points=x.goals*Number(w.goal||2)+x.assists*Number(w.assist||1.2)+x.wins*Number(w.win||.6)+x.saves*Number(w.save||.18)+x.penGoals*Number(w.penalty_goal||.5)+x.penSaves*Number(w.penalty_save||1);x.rating=Math.min(10,Math.max(5,5+x.points));await sb.from('daily_ratings').upsert({session_id:S.session.id,player_id:x.id,rating:x.rating,data:x,updated_at:new Date().toISOString()},{onConflict:'session_id,player_id'})}
+ arr.sort((a,b)=>b.rating-a.rating||b.goals-a.goals||b.assists-a.assists);
+ const top=(key)=>[...arr].sort((a,b)=>b[key]-a[key])[0];
+ $('#modal').innerHTML=`<div class="modalBack"><div class="modal"><div class="spread"><h3>🔥 Destaques do Dia</h3><button id="closeHighlights" class="btn ghost">Fechar</button></div><div class="grid g2"><div class="item">🏆 Craque<br><b>${arr[0]?.name||'-'}</b></div><div class="item">⚽ Artilheiro<br><b>${top('goals')?.name||'-'}</b></div><div class="item">🎯 Garçom<br><b>${top('assists')?.name||'-'}</b></div><div class="item">🧤 Melhor goleiro<br><b>${top('saves')?.name||'-'}</b></div></div><h4>Top 5</h4><div class="list">${arr.slice(0,5).map((x,i)=>`<div class="item spread"><b>${i+1}. ${esc(x.name)}</b><span class="pill">${x.rating.toFixed(1)}</span></div>`).join('')}</div></div></div>`;
+ $('#closeHighlights').onclick=()=>$('#modal').innerHTML='';
 }
 function players(){
  let pm=Object.fromEntries(S.payments.map(x=>[x.player_id,x]));
