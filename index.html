@@ -120,7 +120,11 @@ function addPlayer(){
 }
 function pri(){return S.sp.filter(x=>x.status==='waiting').sort((a,b)=>b.waiting_seconds-a.waiting_seconds||a.play_seconds-b.play_seconds||b.consecutive_waits-a.consecutive_waits||new Date(a.arrived_at)-new Date(b.arrived_at))}
 function queue(){
- let q=pri();$('#content').innerHTML=`<div class="card spread"><div><h3>Fila individual</h3><div class="muted">Prioridade por espera e menor participação.</div></div>${!S.active?'<button id="form" class="btn primary">Formar partida</button>':''}</div><div class="list" style="margin-top:10px">${q.length?q.map((x,i)=>`<div class="item spread"><div><b>${i+1}. ${esc(x.players.name)}</b><div class="muted">Jogou ${tsec(x.play_seconds)} · Esperou ${tsec(x.waiting_seconds)}</div></div><span class="pill">${x.games_played} jogos</span></div>`).join(''):'<div class="card empty">Sem jogadores esperando.</div>'}</div>`;$('#form')?.addEventListener('click',createMatch);
+ let q=pri(),rest=S.sp.filter(x=>x.status==='voluntary_rest');
+ $('#content').innerHTML=`<div class="card spread"><div><h3>Fila individual</h3><div class="muted">Prioridade por espera e menor participação.</div></div>${!S.active?'<button id="form" class="btn primary">Formar partida</button>':''}</div><div class="list" style="margin-top:10px">${q.length?q.map((x,i)=>`<div class="item spread"><div><b>${i+1}. ${esc(x.players.name)}</b><div class="muted">Jogou ${tsec(x.play_seconds)} · Esperou ${tsec(x.waiting_seconds)}</div></div><div class="row"><span class="pill">${x.games_played} jogos</span><button class="btn ghost" data-rest="${x.id}">Descansar</button></div></div>`).join(''):'<div class="card empty">Sem jogadores esperando.</div>'}</div>${rest.length?`<div class="card" style="margin-top:12px"><h3>Descanso voluntário</h3><div class="list">${rest.map(x=>`<div class="item spread"><b>${esc(x.players.name)}</b><button class="btn primary" data-back="${x.id}">Voltar à fila</button></div>`).join('')}</div></div>`:''}`;
+ $('#form')?.addEventListener('click',createMatch);
+ $('[data-rest]').forEach(b=>b.onclick=async()=>{await sb.from('session_players').update({status:'voluntary_rest',voluntarily_resting:true}).eq('id',b.dataset.rest);refresh()});
+ $('[data-back]').forEach(b=>b.onclick=async()=>{await sb.from('session_players').update({status:'waiting',voluntarily_resting:false}).eq('id',b.dataset.back);refresh()});
 }
 async function createMatch(){
  let n=S.settings?.players_per_team||6,q=pri();if(q.length<n*2)return alert('São necessários '+(n*2)+' jogadores para a primeira partida.');
