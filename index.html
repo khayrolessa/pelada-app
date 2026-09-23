@@ -183,23 +183,42 @@ function transitionRole(playerId){
  if(loserIds.has(playerId))return {label:'♻️ Reaproveitado do derrotado',kind:'reuse'};
  return {label:'⏳ Entrou pela fila',kind:'queue'};
 }
-async function replaceSuggested(playerId,mode='rest'){
+async function ensureGoalkeeperForSide(side){
+ await refresh(false);
+ const team=S.mp.filter(x=>x.side===side);
+ const current=team.find(x=>x.is_goalkeeper);if(current)return true;
+ let eligible=team.filter(x=>x.players?.can_play_goalkeeper);
+ if(!eligible.length)eligible=team;
+ const pid=await choosePlayerAction('Quem será o novo goleiro?',eligible,'A troca deixou este time sem goleiro. Escolha quem ficará no gol.');
+ if(!pid)return false;
+ await sb.from('match_players').update({is_goalkeeper:false}).eq('match_id',S.active.id).eq('side',side);
+ await sb.from('match_players').update({is_goalkeeper:true}).eq('match_id',S.active.id).eq('player_id',pid);
+ const sp=S.sp.find(x=>x.player_id===pid);if(sp)await sb.from('session_players').update({goalkeeper_turns:sp.goalkeeper_turns+1}).eq('id',sp.id);
+ await refresh(false);
+ return true;
+}
+async function replaceSuggested(playerId,mode='queue'){
  if(!S.active||S.active.status!=='scheduled')return;
  const out=S.mp.find(x=>x.player_id===playerId);if(!out)return;
  const candidates=pri().filter(x=>x.player_id!==playerId);
  if(!candidates.length)return alert('Não há outro jogador disponível na fila para substituir.');
- const inn=candidates[0],role=transitionRole(inn.player_id);
- const wasGk=!!out.is_goalkeeper;
- await sb.from('match_players').update({player_id:inn.player_id,reused_from_loser:role.kind==='reuse',is_goalkeeper:wasGk&&!!inn.players.can_play_goalkeeper}).eq('id',out.id);
+ const labels={queue:'trocar este jogador pelo primeiro elegível da fila',rest:'mandar este jogador descansar e colocar outro da fila',left:'retirar este jogador da pelada de hoje e colocar outro da fila'};
+ const ok=await confirmAction('Confirmar alteração?',`Deseja realmente ${labels[mode]||'fazer esta alteração'}?`,'OK');
+ if(!ok)return;
+ const inn=candidates[0],wasGk=!!out.is_goalkeeper,role=transitionRole(inn.player_id);
+ await sb.from('match_players').update({player_id:inn.player_id,reused_from_loser:role.kind==='reuse',is_goalkeeper:false}).eq('id',out.id);
  const outSp=S.sp.find(x=>x.player_id===playerId);
  if(outSp){
-   const patch=mode==='left'?{status:'left',left_at:new Date().toISOString(),voluntarily_resting:false}:{status:'voluntary_rest',voluntarily_resting:true};
+   let patch={status:'waiting',voluntarily_resting:false,left_at:null};
+   if(mode==='rest')patch={status:'voluntary_rest',voluntarily_resting:true,left_at:null};
+   if(mode==='left')patch={status:'left',voluntarily_resting:false,left_at:new Date().toISOString()};
    await sb.from('session_players').update(patch).eq('id',outSp.id);
  }
- await sb.from('session_players').update({status:'playing',voluntarily_resting:false}).eq('id',inn.id);
- if(wasGk&&!inn.players.can_play_goalkeeper){
-   const mates=S.mp.filter(x=>x.side===out.side&&x.player_id!==playerId).map(x=>S.sp.find(s=>s.player_id===x.player_id)).filter(Boolean).filter(x=>x.players.can_play_goalkeeper).sort((a,b)=>a.goalkeeper_turns-b.goalkeeper_turns||a.goalkeeper_seconds-b.goalkeeper_seconds);
-   if(mates[0])await sb.from('match_players').update({is_goalkeeper:true}).eq('match_id',S.active.id).eq('player_id',mates[0].player_id);
+ await sb.from('session_players').update({status:'playing',voluntarily_resting:false,left_at:null}).eq('id',inn.id);
+ await refresh(false);
+ if(wasGk){
+   const chosen=await ensureGoalkeeperForSide(out.side);
+   if(!chosen)alert('A troca foi feita, mas o time continua sem goleiro definido. Escolha o goleiro antes de iniciar a partida.');
  }
  await refresh();
 }
