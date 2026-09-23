@@ -86,6 +86,15 @@ function shell(){
  $('#out').onclick=()=>sb.auth.signOut();$('#settingsBtn').onclick=settingsModal;$('.nav button').forEach(b=>b.onclick=()=>{S.tab=b.dataset.tab;render()});render();
 }
 function render(){$$('.nav button').forEach(b=>b.classList.toggle('active',b.dataset.tab===S.tab));({today,players,queue,judge,cash,rank,history}[S.tab]||today)()}
+function settingsModal(){
+ const s=S.settings||{};
+ $('#modal').innerHTML=`<div class="modalBack"><div class="modal"><h3>⚙️ Configurações</h3><div class="stack"><div class="field"><label>Jogadores por time</label><input id="stTeam" type="number" value="${s.players_per_team||6}"></div><div class="field"><label>Duração (minutos)</label><input id="stMin" type="number" value="${Math.round((s.match_duration_seconds||420)/60)}"></div><div class="field"><label>Gols para encerrar</label><input id="stGoals" type="number" value="${s.goals_to_win||2}"></div><div class="field"><label>Contribuição padrão</label><input id="stFee" type="number" step="0.01" value="${s.default_fee||16}"></div><div class="field"><label>Custo padrão do campo</label><input id="stField" type="number" step="0.01" value="${s.default_field_cost||0}"></div><div class="field"><label>Times esperando para saída dos dois no empate</label><input id="stTie" type="number" value="${s.waiting_teams_for_double_exit||2}"></div><button id="saveSettings" class="btn primary">Salvar</button><button id="closeSettings" class="btn ghost">Cancelar</button></div></div></div>`;
+ $('#closeSettings').onclick=()=>$('#modal').innerHTML='';
+ $('#saveSettings').onclick=async()=>{
+  const values={players_per_team:Number($('#stTeam').value||6),match_duration_seconds:Number($('#stMin').value||7)*60,goals_to_win:Number($('#stGoals').value||2),default_fee:Number($('#stFee').value||0),default_field_cost:Number($('#stField').value||0),waiting_teams_for_double_exit:Number($('#stTie').value||2),updated_at:new Date().toISOString()};
+  const{data,error}=await sb.from('app_settings').update(values).eq('owner_id',S.user.id).select().single();if(error)return alert(error.message);S.settings=data;$('#modal').innerHTML='';render();
+ };
+}
 function today(){
  let paid=S.payments.filter(x=>x.status==='paid').reduce((a,b)=>a+Number(b.amount),0),exp=S.cash.filter(x=>x.entry_type==='expense'&&x.session_id===S.session.id).reduce((a,b)=>a+Number(b.amount),0);
  $('#content').innerHTML=`<div class="grid g3"><div class="card"><div class="muted">Presentes</div><div class="big">${S.sp.filter(x=>x.status!=='left').length}</div></div><div class="card"><div class="muted">Partidas</div><div class="big">${S.matches.filter(x=>x.status==='finished').length}</div></div><div class="card"><div class="muted">Saldo do dia</div><div class="big">${fmt(paid-exp)}</div></div></div><div class="card" style="margin-top:12px"><h3>Pelada de hoje</h3><p class="muted">Começa zerada. Só entra o que for registrado.</p><div class="row"><button class="btn primary" id="p1">+ Jogador</button><button class="btn blue" id="p2">Fila</button><button class="btn" id="p3">Juiz</button></div></div>`;
