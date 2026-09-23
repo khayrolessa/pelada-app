@@ -399,6 +399,7 @@ async function adjustLineup(){
  const innId=await choosePlayerAction('Quem entra da fila?',waiting,'Escolha o jogador que entrará no time.');
  if(!innId)return;
  const out=current.find(x=>x.player_id===outId),inn=waiting.find(x=>x.player_id===innId);if(!out||!inn)return;
+ if(fixedTodayById(out.player_id))return alert('Esse jogador está como goleiro fixo hoje. Para liberá-lo como jogador de linha, use “Trocar goleiro” e passe o gol para outra pessoa.');
  const wasGk=!!out.is_goalkeeper;
  const ok=await confirmAction('Confirmar troca?',`${out.players.name} sairá da formação e voltará para a fila. ${inn.players.name} entrará no time.${wasGk?' O time ficará temporariamente sem goleiro até você definir outro.':''}`,'OK');
  if(!ok)return;
@@ -465,18 +466,22 @@ async function swapGk(){
  const pid=await choosePlayerAction('Quem ficará no gol?',eligible,'Apenas jogadores marcados como "pode ir ao gol" aparecem aqui.');
  if(!pid)return;
  const next=eligible.find(x=>x.player_id===pid);if(!next||old?.player_id===pid)return;
- const ok=await confirmAction('Confirmar troca de goleiro?',`${old?.players?.name||'Goleiro atual'} sairá do gol e ${next.players.name} assumirá.`,'OK');
+ const oldFixed=old&&fixedTodayById(old.player_id);
+ const extra=oldFixed?' Como ele é goleiro fixo, ficará liberado como jogador de linha pelo restante desta pelada e poderá entrar na rotação normal.':'';
+ const ok=await confirmAction('Confirmar troca de goleiro?',`${old?.players?.name||'Goleiro atual'} sairá do gol e ${next.players.name} assumirá.${extra}`,'OK');
  if(ok)await changeGk(side,next.player_id);
 }
 async function changeGk(side,pid){
  const sec=elapsed(S.active),old=sideP(side).find(x=>x.is_goalkeeper);
  if(old?.player_id===pid)return;
+ const oldSp=old?S.sp.find(x=>x.player_id===old.player_id):null,fixedReleased=!!oldSp?.fixed_goalkeeper_active;
  if(old)await sb.from('goalkeeper_stints').update({ended_second:sec}).eq('match_id',S.active.id).eq('player_id',old.player_id).is('ended_second',null);
- await sb.from('match_players').update({is_goalkeeper:false}).eq('match_id',S.active.id).eq('side',side);
- await sb.from('match_players').update({is_goalkeeper:true}).eq('match_id',S.active.id).eq('player_id',pid);
+ if(fixedReleased)await sb.from('session_players').update({fixed_goalkeeper_active:false}).eq('id',oldSp.id);
+ await sb.from('match_players').update({is_goalkeeper:false}).eq('match_id',S.active.id).eq('side',side).is('exited_at',null);
+ await sb.from('match_players').update({is_goalkeeper:true}).eq('match_id',S.active.id).eq('player_id',pid).is('exited_at',null);
  await sb.from('goalkeeper_stints').insert({match_id:S.active.id,side,player_id:pid,started_second:sec});
- const sp=S.sp.find(x=>x.player_id===pid);if(sp)await sb.from('session_players').update({goalkeeper_turns:sp.goalkeeper_turns+1}).eq('id',sp.id);
- await sb.from('match_events').insert({match_id:S.active.id,event_type:'goalkeeper_change',side,player_id:pid,goalkeeper_id:pid,match_second:sec,metadata:{from:old?.player_id||null,to:pid}});
+ const sp=S.sp.find(x=>x.player_id===pid);if(sp)await sb.from('session_players').update({goalkeeper_turns:Number(sp.goalkeeper_turns||0)+1}).eq('id',sp.id);
+ await sb.from('match_events').insert({match_id:S.active.id,event_type:'goalkeeper_change',side,player_id:pid,goalkeeper_id:pid,match_second:sec,metadata:{from:old?.player_id||null,to:pid,fixed_released:fixedReleased}});
  refresh();
 }
 async function undo(){
@@ -511,6 +516,7 @@ async function undo(){
        const from=lastE.metadata?.from,to=lastE.metadata?.to;
        if(to)await sb.from('match_players').update({is_goalkeeper:false}).eq('match_id',S.active.id).eq('player_id',to).is('exited_at',null);
        if(from)await sb.from('match_players').update({is_goalkeeper:true}).eq('match_id',S.active.id).eq('player_id',from).is('exited_at',null);
+       if(lastE.metadata?.fixed_released&&from){const fsp=S.sp.find(x=>x.player_id===from);if(fsp)await sb.from('session_players').update({fixed_goalkeeper_active:true}).eq('id',fsp.id)}
        if(to)await sb.from('goalkeeper_stints').delete().eq('match_id',S.active.id).eq('player_id',to).eq('started_second',lastE.match_second);
        if(from)await sb.from('goalkeeper_stints').update({ended_second:null}).eq('match_id',S.active.id).eq('player_id',from).eq('ended_second',lastE.match_second);
      }
