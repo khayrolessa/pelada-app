@@ -27,6 +27,7 @@ const esc=s=>(s??'').toString().replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','
 const isoToday=()=>new Date().toISOString().slice(0,10), tsec=s=>{s=Math.max(0,Math.floor(s||0));return String(Math.floor(s/60)).padStart(2,'0')+':'+String(s%60).padStart(2,'0')};
 let S={user:null,settings:null,session:null,players:[],sp:[],payments:[],cash:[],matches:[],active:null,mp:[],events:[],pens:[],tab:'today',timer:null};
 const judgeToken=new URLSearchParams(location.search).get('judge');
+if('serviceWorker' in navigator) navigator.serviceWorker.register('./sw.js').catch(()=>{});
 
 if(judgeToken){bootJudge(judgeToken)}else{boot()}
 
