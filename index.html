@@ -26,10 +26,10 @@ const fmt=n=>new Intl.NumberFormat('pt-BR',{style:'currency',currency:'BRL'}).fo
 const esc=s=>(s??'').toString().replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const isoToday=()=>{const d=new Date();return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`}, tsec=s=>{s=Math.max(0,Math.floor(s||0));return String(Math.floor(s/60)).padStart(2,'0')+':'+String(s%60).padStart(2,'0')};
 let S={user:null,settings:null,session:null,players:[],sp:[],payments:[],cash:[],matches:[],active:null,mp:[],events:[],pens:[],prevMatch:null,prevMp:[],tab:'today',timer:null};
-const urlParams=new URLSearchParams(location.search),judgeToken=urlParams.get('judge'),tvToken=urlParams.get('tv');
+const urlParams=new URLSearchParams(location.search),judgeToken=urlParams.get('judge'),tvToken=urlParams.get('tv'),rankingToken=urlParams.get('ranking');
 if('serviceWorker' in navigator) navigator.serviceWorker.register('./sw.js').catch(()=>{});
 
-if(tvToken){bootTV(tvToken)}else if(judgeToken){bootJudge(judgeToken)}else{boot()}
+if(rankingToken){bootPublicRanking(rankingToken)}else if(tvToken){bootTV(tvToken)}else if(judgeToken){bootJudge(judgeToken)}else{boot()}
 
 async function boot(){
  const {data:{session}}=await sb.auth.getSession();S.user=session?.user||null;
@@ -872,12 +872,27 @@ async function tvAccess(){
  }catch(e){alert(e.message||String(e))}
 }
 function cash(){let d=S.cash.filter(x=>x.session_id===S.session.id),inc=d.filter(x=>x.entry_type==='income').reduce((a,b)=>a+Number(b.amount),0),exp=d.filter(x=>x.entry_type==='expense').reduce((a,b)=>a+Number(b.amount),0),tot=S.cash.reduce((a,b)=>a+(b.entry_type==='income'?Number(b.amount):-Number(b.amount)),0);$('#content').innerHTML=`<div class="grid g3"><div class="card"><div class="muted">Entradas hoje</div><div class="big">${fmt(inc)}</div></div><div class="card"><div class="muted">Despesas hoje</div><div class="big">${fmt(exp)}</div></div><div class="card"><div class="muted">Caixa acumulado</div><div class="big">${fmt(tot)}</div></div></div><div class="card" style="margin-top:10px"><div class="spread"><h3>Movimentações</h3><button id="ex" class="btn primary">+ Despesa</button></div><div class="list">${d.map(x=>`<div class="item spread"><b>${esc(x.description)}</b><b>${x.entry_type==='expense'?'-':'+'}${fmt(x.amount)}</b></div>`).join('')||'<div class="empty">Sem movimentações.</div>'}</div></div>`;$('#ex').onclick=async()=>{let desc=prompt('Descrição','Campo'),val=Number(prompt('Valor','250')||0);if(desc&&val>0){await sb.from('cash_entries').insert({session_id:S.session.id,owner_id:S.user.id,entry_type:'expense',description:desc,amount:val});refresh()}}}
+async function createPublicRankingLink(){
+ try{
+   const raw=crypto.getRandomValues(new Uint8Array(18)),token=[...raw].map(x=>x.toString(36)).join('').slice(0,28);
+   const buf=await crypto.subtle.digest('SHA-256',new TextEncoder().encode(token)),hash=[...new Uint8Array(buf)].map(b=>b.toString(16).padStart(2,'0')).join('');
+   const expires=new Date(Date.now()+180*24*60*60*1000).toISOString();
+   const {error}=await sb.from('public_rank_links').insert({owner_id:S.user.id,token_hash:hash,expires_at:expires});
+   if(error)throw error;
+   const u=location.origin+location.pathname+'?ranking='+token;
+   if(navigator.share){
+     try{await navigator.share({title:'Ranking da Pelada',text:'⚽ Ranking Overall e cartões dos jogadores',url:u});return}catch(e){if(e?.name==='AbortError')return}
+   }
+   try{await navigator.clipboard.writeText(u);alert('Link público do ranking copiado. Ele é somente leitura e dá acesso apenas ao ranking e aos cartões.')}catch{prompt('Copie o link público do ranking:',u)}
+ }catch(e){alert(e.message||String(e))}
+}
 async function rank(){
  const {data,error}=await sb.from('match_player_performance').select('*').eq('owner_id',S.user.id);
  if(error)return $('#content').innerHTML=`<div class="card empty">${esc(error.message)}</div>`;
  const groups={};for(const r of (data||[]))(groups[r.player_id]||(groups[r.player_id]=[])).push(r);
  const a=Object.entries(groups).map(([id,rows])=>({id,name:rows[0]?.name||'Jogador',...aggregatePerformance(rows)})).filter(x=>x.overall!=null).sort((x,y)=>y.overall-x.overall||y.form-x.form);
- $('#content').innerHTML=`<div class="card"><h3>Ranking Overall</h3><p class="muted">Nota de 0 a 10 baseada no desempenho histórico, fase recente, minutos e tamanho da amostra. Toque no jogador para abrir o cartão.</p></div><div class="list" style="margin-top:10px">${a.map((x,i)=>`<button class="item spread" data-rank-card="${x.id}" style="width:100%;text-align:left"><div><b>${i+1}. ${esc(x.name)}</b><div class="muted">${x.totals.matches} jogos · ${tsec(x.totals.play_seconds)} · Forma ${x.form.toFixed(1)}</div></div><div style="text-align:right"><div class="big">${x.overall.toFixed(1)}</div><div class="muted">⚽ ${x.totals.goals} · 🎯 ${x.totals.assists} · 🧤 ${x.totals.saves}</div></div></button>`).join('')||'<div class="card empty">Sem estatísticas ainda.</div>'}</div>`;
+ $('#content').innerHTML=`<div class="card"><div class="spread"><div><h3>Ranking Overall</h3><p class="muted">Nota de 0 a 10 baseada no desempenho histórico, fase recente, minutos e tamanho da amostra. Toque no jogador para abrir o cartão.</p></div><button id="sharePublicRank" class="btn primary">🔗 Compartilhar ranking</button></div></div><div class="list" style="margin-top:10px">${a.map((x,i)=>`<button class="item spread" data-rank-card="${x.id}" style="width:100%;text-align:left"><div><b>${i+1}. ${esc(x.name)}</b><div class="muted">${x.totals.matches} jogos · ${tsec(x.totals.play_seconds)} · Forma ${x.form.toFixed(1)}</div></div><div style="text-align:right"><div class="big">${x.overall.toFixed(1)}</div><div class="muted">⚽ ${x.totals.goals} · 🎯 ${x.totals.assists} · 🧤 ${x.totals.saves}</div></div></button>`).join('')||'<div class="card empty">Sem estatísticas ainda.</div>'}</div>`;
+ $('#sharePublicRank').onclick=createPublicRankingLink;
  $$('[data-rank-card]').forEach(b=>b.onclick=()=>playerCard(b.dataset.rankCard));
 }
 async function history(){let{data}=await sb.from('sessions').select('*').eq('owner_id',S.user.id).order('session_date',{ascending:false});$('#content').innerHTML=`<div class="card"><h3>Histórico</h3><p class="muted">Abra uma data para reconstruir a pelada.</p></div><div class="list" style="margin-top:10px">${(data||[]).map(x=>`<button class="item" style="text-align:left" data-history="${x.id}"><b>${new Date(x.session_date+'T12:00:00').toLocaleDateString('pt-BR')}</b><div class="muted">${x.status}</div></button>`).join('')||'<div class="card empty">Sem histórico.</div>'}</div>`;$$('[data-history]').forEach(b=>b.onclick=()=>historyDetail(b.dataset.history))}
