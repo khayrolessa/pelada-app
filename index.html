@@ -26,10 +26,10 @@ const fmt=n=>new Intl.NumberFormat('pt-BR',{style:'currency',currency:'BRL'}).fo
 const esc=s=>(s??'').toString().replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const isoToday=()=>{const d=new Date();return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`}, tsec=s=>{s=Math.max(0,Math.floor(s||0));return String(Math.floor(s/60)).padStart(2,'0')+':'+String(s%60).padStart(2,'0')};
 let S={user:null,settings:null,session:null,players:[],sp:[],payments:[],cash:[],matches:[],active:null,mp:[],events:[],pens:[],prevMatch:null,prevMp:[],tab:'today',timer:null};
-const judgeToken=new URLSearchParams(location.search).get('judge');
+const urlParams=new URLSearchParams(location.search),judgeToken=urlParams.get('judge'),tvToken=urlParams.get('tv');
 if('serviceWorker' in navigator) navigator.serviceWorker.register('./sw.js').catch(()=>{});
 
-if(judgeToken){bootJudge(judgeToken)}else{boot()}
+if(tvToken){bootTV(tvToken)}else if(judgeToken){bootJudge(judgeToken)}else{boot()}
 
 async function boot(){
  const {data:{session}}=await sb.auth.getSession();S.user=session?.user||null;
@@ -122,9 +122,14 @@ function shell(){
  $('#app').innerHTML=`<div class="shell"><header class="top"><div><div class="brand">⚽ Pelada</div><div class="sub">${new Date(S.session.session_date+'T12:00:00').toLocaleDateString('pt-BR')}</div></div><div class="row"><button id="settingsBtn" class="btn ghost">⚙️</button><button id="out" class="btn ghost">Sair</button></div></header><main id="content"></main><nav class="nav"><div class="navin">${[['today','Hoje'],['players','Jogadores'],['queue','Fila'],['judge','Juiz'],['cash','Caixa'],['rank','Ranking'],['history','Histórico']].map(x=>`<button data-tab="${x[0]}">${x[1]}</button>`).join('')}</div></nav></div>`;
  $('#out').onclick=()=>sb.auth.signOut();$('#settingsBtn').onclick=settingsModal;$$('.nav button').forEach(b=>b.onclick=()=>{S.tab=b.dataset.tab;render()});render();
 }
+const sessionClosed=()=>S.session?.status==='closed';
 function render(){
  try{
-  $$('.nav button').forEach(b=>b.classList.toggle('active',b.dataset.tab===S.tab));
+  $('.nav button').forEach(b=>b.classList.toggle('active',b.dataset.tab===S.tab));
+  if(sessionClosed()&&['players','queue','judge','cash'].includes(S.tab)){
+    $('#content').innerHTML='<div class="card"><h3>🔒 Pelada encerrada</h3><p class="muted">Os registros deste dia estão protegidos contra alterações. Reabra a pelada pela tela Hoje se precisar corrigir alguma coisa.</p><div class="row"><button id="goClosedToday" class="btn primary">Ver resumo final</button><button id="goClosedRank" class="btn ghost">Ranking</button></div></div>';
+    $('#goClosedToday').onclick=()=>{S.tab='today';render()};$('#goClosedRank').onclick=()=>{S.tab='rank';render()};return;
+  }
   const view=({today,players,queue,judge,cash,rank,history}[S.tab]||today);
   view();
  }catch(err){
@@ -144,9 +149,70 @@ function settingsModal(){
  };
 }
 function today(){
+ if(sessionClosed()){closedSessionHome();return}
  let paid=S.payments.filter(x=>x.status==='paid').reduce((a,b)=>a+Number(b.amount),0),exp=S.cash.filter(x=>x.entry_type==='expense'&&x.session_id===S.session.id).reduce((a,b)=>a+Number(b.amount),0);
- $('#content').innerHTML=`<div class="grid g3"><div class="card"><div class="muted">Presentes</div><div class="big">${S.sp.filter(x=>x.status!=='left').length}</div></div><div class="card"><div class="muted">Partidas</div><div class="big">${S.matches.filter(x=>x.status==='finished').length}</div></div><div class="card"><div class="muted">Saldo do dia</div><div class="big">${fmt(paid-exp)}</div></div></div><div class="card" style="margin-top:12px"><h3>Pelada de hoje</h3><p class="muted">Começa zerada. Só entra o que for registrado.</p><div class="row"><button class="btn primary" id="p1">+ Jogador</button><button class="btn blue" id="p2">Fila</button><button class="btn" id="p3">Juiz</button><button class="btn amber" id="p4">🔥 Destaques</button></div></div>`;
- $('#p1').onclick=()=>{S.tab='players';render()};$('#p2').onclick=()=>{S.tab='queue';render()};$('#p3').onclick=()=>{S.tab='judge';render()};$('#p4').onclick=dailyHighlights;
+ $('#content').innerHTML=`<div class="grid g3"><div class="card"><div class="muted">Presentes</div><div class="big">${S.sp.filter(x=>x.status!=='left').length}</div></div><div class="card"><div class="muted">Partidas</div><div class="big">${S.matches.filter(x=>x.status==='finished').length}</div></div><div class="card"><div class="muted">Saldo do dia</div><div class="big">${fmt(paid-exp)}</div></div></div><div class="card" style="margin-top:12px"><h3>Pelada de hoje</h3><p class="muted">Tudo que acontece aqui alimenta histórico, destaques e cartões dos jogadores.</p><div class="row"><button class="btn primary" id="p1">+ Jogador</button><button class="btn blue" id="p2">Fila</button><button class="btn" id="p3">Juiz</button><button class="btn amber" id="p4">🔥 Destaques</button><button class="btn red" id="closePeladaBtn">🏁 Encerrar pelada</button></div></div>`;
+ $('#p1').onclick=()=>{S.tab='players';render()};$('#p2').onclick=()=>{S.tab='queue';render()};$('#p3').onclick=()=>{S.tab='judge';render()};$('#p4').onclick=dailyHighlights;$('#closePeladaBtn').onclick=closePelada;
+}
+async function getSessionSummary(sessionId=S.session.id){
+ const [perf,cashR,spR,matchR]=await Promise.all([
+   sb.from('match_player_performance').select('*').eq('session_id',sessionId),
+   sb.from('cash_entries').select('*').eq('session_id',sessionId),
+   sb.from('session_players').select('player_id').eq('session_id',sessionId),
+   sb.from('matches').select('*').eq('session_id',sessionId).eq('status','finished').order('sequence_no')
+ ]);
+ if(perf.error)throw perf.error;
+ const groups={};for(const r of (perf.data||[]))(groups[r.player_id]||(groups[r.player_id]=[])).push(r);
+ const arr=Object.entries(groups).map(([id,rows])=>{const a=aggregatePerformance(rows);return a?{id,name:rows[0]?.name||'Jogador',rating:a.hist,...a.totals,savePct:a.savePct}:null}).filter(Boolean).sort((a,b)=>b.rating-a.rating||b.goals-a.goals||b.assists-a.assists);
+ const top=key=>[...arr].sort((a,b)=>Number(b[key]||0)-Number(a[key]||0))[0]||null;
+ const keepers=arr.filter(x=>x.goalkeeper_seconds>0).sort((a,b)=>((Number(b.savePct||0)*1.5)+b.saves*.12+b.penalty_saves*.75)-((Number(a.savePct||0)*1.5)+a.saves*.12+a.penalty_saves*.75));
+ const cash=cashR.data||[],income=cash.filter(x=>x.entry_type==='income').reduce((s,x)=>s+Number(x.amount||0),0),expense=cash.filter(x=>x.entry_type==='expense').reduce((s,x)=>s+Number(x.amount||0),0);
+ const matches=matchR.data||[],goals=matches.reduce((s,m)=>s+Number(m.left_score||0)+Number(m.right_score||0),0);
+ return {date:S.session?.session_date,players:new Set((spR.data||[]).map(x=>x.player_id)).size,matches:matches.length,goals,income,expense,balance:income-expense,arr,craque:arr[0]||null,artilheiro:top('goals'),garcom:top('assists'),keeper:keepers[0]||null};
+}
+function sessionSummaryText(s){
+ const d=new Date((s.date||isoToday())+'T12:00:00').toLocaleDateString('pt-BR');
+ const top5=s.arr.slice(0,5).map((x,i)=>`${i+1}. ${x.name} (${x.rating.toFixed(1)})`).join('\n');
+ return `⚽ PERNAS DE PAU — ${d}\n\n👥 ${s.players} jogadores · 🎮 ${s.matches} partidas · ⚽ ${s.goals} gols\n\n🏆 Craque: ${s.craque?.name||'-'}${s.craque?' — '+s.craque.rating.toFixed(1):''}\n⚽ Artilheiro: ${s.artilheiro?.name||'-'}${s.artilheiro?' — '+s.artilheiro.goals+' gols':''}\n🎯 Garçom: ${s.garcom?.name||'-'}${s.garcom?' — '+s.garcom.assists+' assistências':''}\n🧤 Paredão: ${s.keeper?.name||'-'}${s.keeper&&s.keeper.savePct!=null?' — '+Math.round(s.keeper.savePct*100)+'% defesas':''}\n\n🔥 TOP 5 DA PELADA\n${top5||'-'}\n\n💰 Saldo do dia: ${fmt(s.balance)}`;
+}
+function sessionSummaryHtml(s){
+ return `<div class="grid g3"><div class="card"><div class="muted">Jogadores</div><div class="big">${s.players}</div></div><div class="card"><div class="muted">Partidas</div><div class="big">${s.matches}</div></div><div class="card"><div class="muted">Gols</div><div class="big">${s.goals}</div></div></div><div class="grid g2" style="margin-top:10px"><div class="item">🏆 Craque<br><b>${esc(s.craque?.name||'-')}</b>${s.craque?`<div class="pill" style="margin-top:5px">${s.craque.rating.toFixed(1)}</div>`:''}</div><div class="item">⚽ Artilheiro<br><b>${esc(s.artilheiro?.name||'-')}</b><div class="muted">${s.artilheiro?.goals||0} gols</div></div><div class="item">🎯 Garçom<br><b>${esc(s.garcom?.name||'-')}</b><div class="muted">${s.garcom?.assists||0} assistências</div></div><div class="item">🧤 Paredão<br><b>${esc(s.keeper?.name||'-')}</b><div class="muted">${s.keeper&&s.keeper.savePct!=null?Math.round(s.keeper.savePct*100)+'% de defesas':'-'}</div></div></div><div class="card" style="margin-top:10px"><div class="spread"><b>🔥 Top 5</b><span class="pill">Saldo ${fmt(s.balance)}</span></div><div class="list" style="margin-top:8px">${s.arr.slice(0,5).map((x,i)=>`<button class="item spread" data-summary-card="${x.id}" style="width:100%;text-align:left"><b>${i+1}. ${esc(x.name)}</b><span class="pill">${x.rating.toFixed(1)}</span></button>`).join('')||'<div class="empty">Sem estatísticas.</div>'}</div></div>`;
+}
+async function shareSessionWhatsApp(summary){
+ const text=sessionSummaryText(summary),url='https://wa.me/?text='+encodeURIComponent(text);
+ const w=window.open(url,'_blank','noopener');
+ if(!w){try{await navigator.clipboard.writeText(text);alert('Resumo copiado. Cole no WhatsApp.')}catch{alert(text)}}
+}
+async function closePelada(){
+ if(S.active&&['live','paused'].includes(S.active.status))return alert('Encerre a partida que está em andamento antes de fechar a pelada.');
+ let discardScheduled=false;
+ if(S.active?.status==='scheduled'){
+   discardScheduled=await confirmAction('Cancelar próxima formação?','Existe uma próxima partida já sugerida. Ela será cancelada para encerrar a pelada, sem apagar os jogos anteriores.','OK');
+   if(!discardScheduled)return;
+ }
+ const ok=await confirmAction('Encerrar a pelada?','O dia ficará fechado e protegido contra alterações. Você poderá reabrir depois, se precisar corrigir algo.','Encerrar');
+ if(!ok)return;
+ if(S.active?.status==='scheduled'){
+   const ids=S.mp.map(x=>x.player_id);
+   await sb.from('matches').update({status:'cancelled',ended_at:new Date().toISOString()}).eq('id',S.active.id);
+   if(ids.length)await sb.from('session_players').update({status:'waiting'}).eq('session_id',S.session.id).in('player_id',ids);
+ }
+ const {data,error}=await sb.from('sessions').update({status:'closed',closed_at:new Date().toISOString()}).eq('id',S.session.id).select().single();
+ if(error)return alert(error.message);S.session=data;await refresh(false);S.tab='today';render();
+}
+async function reopenPelada(){
+ const ok=await confirmAction('Reabrir pelada?','Os registros voltarão a ficar editáveis. Use isso apenas para continuar a pelada ou corrigir alguma informação.','Reabrir');
+ if(!ok)return;
+ const {data,error}=await sb.from('sessions').update({status:'open',closed_at:null}).eq('id',S.session.id).select().single();
+ if(error)return alert(error.message);S.session=data;await refresh(false);S.tab='today';render();
+}
+async function closedSessionHome(){
+ try{
+   const s=await getSessionSummary();
+   $('#content').innerHTML=`<div class="card"><div class="spread"><div><h2 style="margin:0">🏁 Pelada encerrada</h2><div class="muted">${new Date((S.session.session_date||isoToday())+'T12:00:00').toLocaleDateString('pt-BR')} · registros protegidos</div></div><span class="pill">🔒 Fechada</span></div></div><div style="margin-top:10px">${sessionSummaryHtml(s)}</div><div class="card" style="margin-top:10px"><div class="row"><button id="shareWhats" class="btn primary">📲 Compartilhar no WhatsApp</button><button id="closedHighlights" class="btn amber">🔥 Destaques</button><button id="reopenPeladaBtn" class="btn ghost">🔓 Reabrir pelada</button></div></div>`;
+   $('#shareWhats').onclick=()=>shareSessionWhatsApp(s);$('#closedHighlights').onclick=dailyHighlights;$('#reopenPeladaBtn').onclick=reopenPelada;
+   $$('[data-summary-card]').forEach(b=>b.onclick=()=>playerCard(b.dataset.summaryCard));
+ }catch(e){$('#content').innerHTML=`<div class="card"><h3>Erro ao montar resumo</h3><p class="muted">${esc(e.message||String(e))}</p></div>`}
 }
 const clamp=(n,min,max)=>Math.min(max,Math.max(min,n));
 function performanceRating(r){
