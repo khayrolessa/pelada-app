@@ -262,16 +262,61 @@ function aggregatePerformance(rows){
  const confidenceLabel=confidence<.35?'Amostra pequena':confidence<.70?'Em consolidação':'Nota consolidada';
  return {rated,hist,recent,overall,form,confidence,confidenceLabel,totals,savePct,badges:badges.slice(0,3),recentRows};
 }
+function playerAchievements(rows,a){
+ const rated=[...a.rated].sort((x,y)=>String(x.session_date).localeCompare(String(y.session_date))||Number(x.sequence_no)-Number(y.sequence_no));
+ let winStreak=0,maxWin=0,unbeaten=0,maxUnbeaten=0;
+ for(const x of rated){
+   const win=!!x.winner_side&&x.winner_side===x.side,loss=!!x.winner_side&&x.winner_side!==x.side;
+   winStreak=win?winStreak+1:0;maxWin=Math.max(maxWin,winStreak);
+   unbeaten=loss?0:unbeaten+1;maxUnbeaten=Math.max(maxUnbeaten,unbeaten);
+ }
+ const peladas=new Set(rated.map(x=>x.session_id)).size,t=a.totals,earned=[];
+ const add=(icon,title,desc,ok)=>{if(ok)earned.push({icon,title,desc})};
+ add('⚽','Doblete','Marcou 2 gols na mesma partida.',rated.some(x=>Number(x.goals||0)>=2));
+ add('🎯','Maestro','Deu 2 assistências na mesma partida.',rated.some(x=>Number(x.assists||0)>=2));
+ add('🧤','Muralha','Teve uma atuação de goleiro com 5+ defesas ou 75%+ de aproveitamento em pelo menos 4 chutes.',rated.some(x=>{const s=Number(x.saves||0),g=Number(x.goals_conceded||0),shots=s+g;return Number(x.goalkeeper_seconds||0)>0&&(s>=5||(shots>=4&&s/shots>=.75))}));
+ add('🥅','Caça-pênaltis','Defendeu pelo menos um pênalti.',t.penalty_saves>=1);
+ add('🔥','Trinca','Conseguiu 3 vitórias consecutivas.',maxWin>=3);
+ add('🛡️','Invicto','Ficou 5 partidas seguidas sem perder.',maxUnbeaten>=5);
+ add('🎖️','Veterano','Participou de 10 peladas registradas.',peladas>=10);
+ add('⏱️','Motorzinho','Somou 5 horas de jogo registradas.',t.play_seconds>=18000);
+ add('⚽','25 Gols','Chegou a 25 gols no histórico.',t.goals>=25);
+ add('🎯','15 Assistências','Chegou a 15 assistências no histórico.',t.assists>=15);
+ add('🧱','50 Defesas','Chegou a 50 defesas no histórico.',t.saves>=50);
+ const goalsTarget=t.goals<10?10:t.goals<25?25:t.goals<50?50:100;
+ const assistTarget=t.assists<5?5:t.assists<15?15:t.assists<30?30:50;
+ const savesTarget=t.saves<10?10:t.saves<25?25:t.saves<50?50:100;
+ const peladaTarget=peladas<5?5:peladas<10?10:peladas<25?25:50;
+ const goalsDone=t.goals>=100,assistDone=t.assists>=50,savesDone=t.saves>=100,peladaDone=peladas>=50;
+ const goalsNext=goalsDone?'Meta máxima alcançada':`${t.goals}/${goalsTarget} gols`;
+ const assistNext=assistDone?'Meta máxima alcançada':`${t.assists}/${assistTarget} assistências`;
+ const savesNext=savesDone?'Meta máxima alcançada':`${t.saves}/${savesTarget} defesas`;
+ const peladaNext=peladaDone?'Meta máxima alcançada':`${peladas}/${peladaTarget} peladas`;
+ return {earned,peladas,maxWin,maxUnbeaten,next:[['⚽',goalsNext],['🎯',assistNext],['🧤',savesNext],['🎖️',peladaNext]]};
+}
+function overallEvolution(rows){
+ const groups={};
+ for(const r of (rows||[])){const k=r.session_id;(groups[k]||(groups[k]={date:r.session_date,rows:[]})).rows.push(r)}
+ const sessions=Object.values(groups).sort((a,b)=>String(a.date).localeCompare(String(b.date))),cumulative=[],out=[];
+ for(const g of sessions){cumulative.push(...g.rows);const all=aggregatePerformance(cumulative),day=aggregatePerformance(g.rows);if(all&&day)out.push({date:g.date,overall:all.overall,day:day.hist})}
+ return out;
+}
+function evolutionSvg(points){
+ if(!points.length)return '';
+ const shown=points.slice(-10),w=520,h=145,pad=24,min=4,max=10;
+ const xy=shown.map((p,i)=>{const x=shown.length===1?w/2:pad+i*((w-pad*2)/(shown.length-1)),y=h-30-clamp((p.overall-min)/(max-min),0,1)*(h-55);return{x,y,p}});
+ const line=xy.map(q=>q.x.toFixed(1)+','+q.y.toFixed(1)).join(' ');
+ return `<svg viewBox="0 0 ${w} ${h}" role="img" aria-label="Evolução do Overall" style="width:100%;height:auto"><line x1="${pad}" y1="${h-30}" x2="${w-pad}" y2="${h-30}" stroke="currentColor" opacity=".18"/><polyline points="${line}" fill="none" stroke="currentColor" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"/>${xy.map((q,i)=>`<circle cx="${q.x}" cy="${q.y}" r="5" fill="currentColor"/><text x="${q.x}" y="${Math.max(14,q.y-10)}" text-anchor="middle" font-size="13" fill="currentColor">${q.p.overall.toFixed(1)}</text>`).join('')}<text x="${pad}" y="${h-8}" font-size="12" fill="currentColor">${new Date(shown[0].date+'T12:00:00').toLocaleDateString('pt-BR',{day:'2-digit',month:'2-digit'})}</text><text x="${w-pad}" y="${h-8}" text-anchor="end" font-size="12" fill="currentColor">${new Date(shown.at(-1).date+'T12:00:00').toLocaleDateString('pt-BR',{day:'2-digit',month:'2-digit'})}</text></svg>`;
+}
 async function playerCard(playerId){
- const player=S.players.find(p=>p.id===playerId)||S.sp.find(x=>x.player_id===playerId)?.players;
- if(!player)return;
  const {data,error}=await sb.from('match_player_performance').select('*').eq('player_id',playerId).order('session_date',{ascending:false}).order('sequence_no',{ascending:false});
  if(error)return alert(error.message);
  const a=aggregatePerformance(data||[]);
  if(!a)return alert('Esse jogador ainda não tem partidas finalizadas para gerar uma nota.');
- const t=a.totals,last=a.recentRows.slice(0,5),latest=a.recentRows[0],latestParts=latest?.parts||[];
+ const player=S.players.find(p=>p.id===playerId)||S.sp.find(x=>x.player_id===playerId)?.players||{name:data?.[0]?.name||'Jogador'};
+ const t=a.totals,last=a.recentRows.slice(0,5),latest=a.recentRows[0],latestParts=latest?.parts||[],ach=playerAchievements(data||[],a),evo=overallEvolution(data||[]);
  const pct=a.savePct===null?'-':Math.round(a.savePct*100)+'%';
- $('#modal').innerHTML=`<div class="modalBack"><div class="modal" style="max-width:620px"><div class="spread"><div><div class="muted">CARTÃO DO JOGADOR</div><h2 style="margin:3px 0">${esc(player.name)}</h2><div class="row">${a.badges.map(x=>`<span class="pill">${x}</span>`).join('')}</div></div><div style="text-align:center"><div style="font-size:38px;font-weight:950">${a.overall.toFixed(1)}</div><div class="muted">OVERALL</div></div></div><div class="grid g3" style="margin-top:12px"><div class="item"><div class="muted">Forma</div><div class="big">${a.form.toFixed(1)}</div></div><div class="item"><div class="muted">Partidas</div><div class="big">${t.matches}</div></div><div class="item"><div class="muted">Tempo</div><div class="big">${tsec(t.play_seconds)}</div></div></div><div class="grid g3" style="margin-top:8px"><div class="item">⚽ <b>${t.goals}</b><div class="muted">gols</div></div><div class="item">🎯 <b>${t.assists}</b><div class="muted">assistências</div></div><div class="item">🏆 <b>${t.wins}</b><div class="muted">vitórias</div></div></div><div class="grid g3" style="margin-top:8px"><div class="item">🧤 <b>${t.saves}</b><div class="muted">defesas</div></div><div class="item">🥅 <b>${pct}</b><div class="muted">% defesas</div></div><div class="item">⏱ <b>${tsec(t.goalkeeper_seconds)}</b><div class="muted">no gol</div></div></div><div class="card" style="margin-top:10px"><div class="spread"><b>Últimas 5 partidas</b><span class="pill">${a.confidenceLabel}</span></div><div class="row" style="margin-top:8px">${last.map(x=>`<span class="pill" title="${x.session_date} #${x.sequence_no}">${x.rating.toFixed(1)}</span>`).join('')}</div><div class="muted" style="margin-top:8px">Overall: 70% histórico + 30% fase recente, com fator de confiança conforme aumentam partidas e minutos registrados.</div></div>${latest?`<details class="card" style="margin-top:10px"><summary><b>Por que a última nota foi ${latest.rating.toFixed(1)}?</b></summary><div class="list" style="margin-top:8px"><div class="item spread"><span>Base da partida</span><b>6,0</b></div>${latestParts.map(p=>`<div class="item spread"><span>${esc(p.label)}</span><b>${p.value>0?'+':''}${p.value.toFixed(2)}</b></div>`).join('')}<div class="item spread"><span>Participação</span><b>${Math.round(latest.part*100)}%</b></div><div class="item spread"><span>Nota final</span><b>${latest.rating.toFixed(1)}</b></div></div></details>`:''}<h4>Últimas partidas</h4><div class="list">${a.recentRows.slice(0,8).map(x=>`<div class="item spread"><div><b>${new Date(x.session_date+'T12:00:00').toLocaleDateString('pt-BR')} · Jogo #${x.sequence_no}</b><div class="muted">${tsec(x.play_seconds)} · ⚽ ${x.goals} · 🎯 ${x.assists} · 🧤 ${x.saves}</div></div><span class="pill">${x.rating.toFixed(1)}</span></div>`).join('')}</div><button id="closePlayerCard" class="btn ghost" style="width:100%;margin-top:12px">Fechar</button></div></div>`;
+ $('#modal').innerHTML=`<div class="modalBack"><div class="modal" style="max-width:680px"><div class="spread"><div><div class="muted">CARTÃO DO JOGADOR</div><h2 style="margin:3px 0">${esc(player.name)}</h2><div class="row">${a.badges.map(x=>`<span class="pill">${x}</span>`).join('')}</div></div><div style="text-align:center"><div style="font-size:38px;font-weight:950">${a.overall.toFixed(1)}</div><div class="muted">OVERALL</div></div></div><div class="grid g3" style="margin-top:12px"><div class="item"><div class="muted">Forma</div><div class="big">${a.form.toFixed(1)}</div></div><div class="item"><div class="muted">Partidas</div><div class="big">${t.matches}</div></div><div class="item"><div class="muted">Peladas</div><div class="big">${ach.peladas}</div></div></div><div class="grid g3" style="margin-top:8px"><div class="item">⚽ <b>${t.goals}</b><div class="muted">gols</div></div><div class="item">🎯 <b>${t.assists}</b><div class="muted">assistências</div></div><div class="item">🏆 <b>${t.wins}</b><div class="muted">vitórias</div></div></div><div class="grid g3" style="margin-top:8px"><div class="item">🧤 <b>${t.saves}</b><div class="muted">defesas</div></div><div class="item">🥅 <b>${pct}</b><div class="muted">% defesas</div></div><div class="item">⏱ <b>${tsec(t.play_seconds)}</b><div class="muted">tempo total</div></div></div><div class="card" style="margin-top:10px"><div class="spread"><b>📈 Evolução do Overall</b><span class="pill">${a.confidenceLabel}</span></div>${evolutionSvg(evo)}<div class="row">${evo.slice(-6).map(x=>`<span class="pill">${new Date(x.date+'T12:00:00').toLocaleDateString('pt-BR',{day:'2-digit',month:'2-digit'})} · ${x.overall.toFixed(1)}</span>`).join('')}</div><div class="muted" style="margin-top:8px">Cada ponto mostra como o Overall ficou após aquela pelada.</div></div><div class="card" style="margin-top:10px"><div class="spread"><b>🏅 Conquistas</b><span class="pill">${ach.earned.length} desbloqueadas</span></div><div class="grid g2" style="margin-top:8px">${ach.earned.length?ach.earned.map(x=>`<div class="item"><div style="font-size:24px">${x.icon}</div><b>${esc(x.title)}</b><div class="muted">${esc(x.desc)}</div></div>`).join(''):'<div class="item muted">As primeiras conquistas aparecem conforme o histórico cresce.</div>'}</div><h4>Próximas metas</h4><div class="row">${ach.next.map(x=>`<span class="pill">${x[0]} ${x[1]}</span>`).join('')}</div></div><div class="card" style="margin-top:10px"><div class="spread"><b>Últimas 5 partidas</b><span class="pill">Forma ${a.form.toFixed(1)}</span></div><div class="row" style="margin-top:8px">${last.map(x=>`<span class="pill" title="${x.session_date} #${x.sequence_no}">${x.rating.toFixed(1)}</span>`).join('')}</div><div class="muted" style="margin-top:8px">Overall: 70% histórico + 30% fase recente, com fator de confiança conforme aumentam partidas e minutos registrados.</div></div>${latest?`<details class="card" style="margin-top:10px"><summary><b>Por que a última nota foi ${latest.rating.toFixed(1)}?</b></summary><div class="list" style="margin-top:8px"><div class="item spread"><span>Base da partida</span><b>6,0</b></div>${latestParts.map(p=>`<div class="item spread"><span>${esc(p.label)}</span><b>${p.value>0?'+':''}${p.value.toFixed(2)}</b></div>`).join('')}<div class="item spread"><span>Participação</span><b>${Math.round(latest.part*100)}%</b></div><div class="item spread"><span>Nota final</span><b>${latest.rating.toFixed(1)}</b></div></div></details>`:''}<h4>Últimas partidas</h4><div class="list">${a.recentRows.slice(0,8).map(x=>`<div class="item spread"><div><b>${new Date(x.session_date+'T12:00:00').toLocaleDateString('pt-BR')} · Jogo #${x.sequence_no}</b><div class="muted">${tsec(x.play_seconds)} · ⚽ ${x.goals} · 🎯 ${x.assists} · 🧤 ${x.saves}</div></div><span class="pill">${x.rating.toFixed(1)}</span></div>`).join('')}</div><button id="closePlayerCard" class="btn ghost" style="width:100%;margin-top:12px">Fechar</button></div></div>`;
  $('#closePlayerCard').onclick=()=>$('#modal').innerHTML='';
 }
 async function dailyHighlights(){
