@@ -125,7 +125,7 @@ function shell(){
 const sessionClosed=()=>S.session?.status==='closed';
 function render(){
  try{
-  $('.nav button').forEach(b=>b.classList.toggle('active',b.dataset.tab===S.tab));
+  $$('.nav button').forEach(b=>b.classList.toggle('active',b.dataset.tab===S.tab));
   if(sessionClosed()&&['players','queue','judge','cash'].includes(S.tab)){
     $('#content').innerHTML='<div class="card"><h3>🔒 Pelada encerrada</h3><p class="muted">Os registros deste dia estão protegidos contra alterações. Reabra a pelada pela tela Hoje se precisar corrigir alguma coisa.</p><div class="row"><button id="goClosedToday" class="btn primary">Ver resumo final</button><button id="goClosedRank" class="btn ghost">Ranking</button></div></div>';
     $('#goClosedToday').onclick=()=>{S.tab='today';render()};$('#goClosedRank').onclick=()=>{S.tab='rank';render()};return;
