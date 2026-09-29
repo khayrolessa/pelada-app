@@ -153,7 +153,7 @@ function performanceRating(r){
  const played=Number(r.play_seconds||0),duration=Math.max(1,Number(r.duration_seconds||420)),part=clamp(played/duration,0,1);
  let raw=6,parts=[];
  const add=(label,v)=>{if(!v)return;raw+=v;parts.push({label,value:v})};
- const goals=Number(r.goals||0),assists=Number(r.assists||0),own=Number(r.own_goals||0),saves=Number(r.saves||0),ga=Number(r.goals_conceded||0),pg=Number(r.penalty_goals||0),ps=Number(r.penalty_saves||0),gkSec=Number(r.goalkeeper_seconds||0);
+ const goals=Number(r.goals||0),assists=Number(r.assists||0),own=Number(r.own_goals||0),saves=Number(r.saves||0),ga=Number(r.goals_conceded||0),ogc=Number(r.own_goals_conceded||0),pg=Number(r.penalty_goals||0),ps=Number(r.penalty_saves||0),gkSec=Number(r.goalkeeper_seconds||0);
  add(`${goals} gol${goals===1?'':'s'}`,goals*1.10);
  add(`${assists} assistência${assists===1?'':'s'}`,assists*.65);
  add(`${own} gol contra`,own*-.80);
@@ -169,7 +169,7 @@ function performanceRating(r){
      const pct=saves/shots,adj=clamp((pct-.50)*1.2,-.45,.60);
      add(`Aproveitamento no gol ${Math.round(pct*100)}%`,adj);
    }
-   if(gkSec>=120&&ga===0)add('Sem sofrer gol no período de goleiro',.35);
+   if(gkSec>=120&&ga===0&&ogc===0)add('Sem sofrer gol no período de goleiro',.35);
  }
  const sample=.55+.45*part,rating=clamp(6+(raw-6)*sample,0,10);
  return {rating,raw,part,weight:.35+.65*part,parts,savePct:(saves+ga)>0?saves/(saves+ga):null};
@@ -184,8 +184,8 @@ function aggregatePerformance(rows){
  const confidence=clamp((1-Math.exp(-matches/12))*.45+(1-Math.exp(-minutes/120))*.55,0,1);
  const overall=clamp(6+((hist*.70+recent*.30)-6)*(.45+.55*confidence),0,10);
  const formRows=recentRows.slice(0,5),form=formRows.length?formRows.reduce((s,x)=>s+x.rating,0)/formRows.length:hist;
- const totals={matches,minutes,play_seconds:rated.reduce((s,x)=>s+Number(x.play_seconds||0),0),line_seconds:rated.reduce((s,x)=>s+Number(x.line_seconds||0),0),goalkeeper_seconds:rated.reduce((s,x)=>s+Number(x.goalkeeper_seconds||0),0),goals:0,assists:0,saves:0,goals_conceded:0,own_goals:0,penalty_goals:0,penalty_saves:0,wins:0,draws:0,losses:0};
- rated.forEach(x=>{for(const k of ['goals','assists','saves','goals_conceded','own_goals','penalty_goals','penalty_saves'])totals[k]+=Number(x[k]||0);if(!x.winner_side)totals.draws++;else if(x.winner_side===x.side)totals.wins++;else totals.losses++});
+ const totals={matches,minutes,play_seconds:rated.reduce((s,x)=>s+Number(x.play_seconds||0),0),line_seconds:rated.reduce((s,x)=>s+Number(x.line_seconds||0),0),goalkeeper_seconds:rated.reduce((s,x)=>s+Number(x.goalkeeper_seconds||0),0),goals:0,assists:0,saves:0,goals_conceded:0,own_goals_conceded:0,own_goals:0,penalty_goals:0,penalty_saves:0,wins:0,draws:0,losses:0};
+ rated.forEach(x=>{for(const k of ['goals','assists','saves','goals_conceded','own_goals_conceded','own_goals','penalty_goals','penalty_saves'])totals[k]+=Number(x[k]||0);if(!x.winner_side)totals.draws++;else if(x.winner_side===x.side)totals.wins++;else totals.losses++});
  const shots=totals.saves+totals.goals_conceded,savePct=shots?totals.saves/shots:null,winPct=matches?totals.wins/matches:0,lineEq=Math.max(1,totals.line_seconds/420);
  const badges=[];
  if(totals.goals>=3&&totals.goals/lineEq>=.45)badges.push('⚽ Finalizador');
