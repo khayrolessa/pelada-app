@@ -148,31 +148,90 @@ function today(){
  $('#content').innerHTML=`<div class="grid g3"><div class="card"><div class="muted">Presentes</div><div class="big">${S.sp.filter(x=>x.status!=='left').length}</div></div><div class="card"><div class="muted">Partidas</div><div class="big">${S.matches.filter(x=>x.status==='finished').length}</div></div><div class="card"><div class="muted">Saldo do dia</div><div class="big">${fmt(paid-exp)}</div></div></div><div class="card" style="margin-top:12px"><h3>Pelada de hoje</h3><p class="muted">Começa zerada. Só entra o que for registrado.</p><div class="row"><button class="btn primary" id="p1">+ Jogador</button><button class="btn blue" id="p2">Fila</button><button class="btn" id="p3">Juiz</button><button class="btn amber" id="p4">🔥 Destaques</button></div></div>`;
  $('#p1').onclick=()=>{S.tab='players';render()};$('#p2').onclick=()=>{S.tab='queue';render()};$('#p3').onclick=()=>{S.tab='judge';render()};$('#p4').onclick=dailyHighlights;
 }
+const clamp=(n,min,max)=>Math.min(max,Math.max(min,n));
+function performanceRating(r){
+ const played=Number(r.play_seconds||0),duration=Math.max(1,Number(r.duration_seconds||420)),part=clamp(played/duration,0,1);
+ let raw=6,parts=[];
+ const add=(label,v)=>{if(!v)return;raw+=v;parts.push({label,value:v})};
+ const goals=Number(r.goals||0),assists=Number(r.assists||0),own=Number(r.own_goals||0),saves=Number(r.saves||0),ga=Number(r.goals_conceded||0),pg=Number(r.penalty_goals||0),ps=Number(r.penalty_saves||0),gkSec=Number(r.goalkeeper_seconds||0);
+ add(`${goals} gol${goals===1?'':'s'}`,goals*1.10);
+ add(`${assists} assistência${assists===1?'':'s'}`,assists*.65);
+ add(`${own} gol contra`,own*-.80);
+ add(`${pg} gol de pênalti`,pg*.25);
+ if(r.winner_side){add(r.winner_side===r.side?'Vitória':'Derrota',r.winner_side===r.side?.25:-.10)}
+ else add('Empate',.05);
+ if(gkSec>0){
+   add(`${saves} defesa${saves===1?'':'s'}`,Math.min(.75,saves*.12));
+   add(`${ps} pênalti${ps===1?'':'s'} defendido${ps===1?'':'s'}`,ps*.75);
+   add(`${ga} gol${ga===1?'':'s'} sofrido${ga===1?'':'s'}`,ga*-.15);
+   const shots=saves+ga;
+   if(shots>=2){
+     const pct=saves/shots,adj=clamp((pct-.50)*1.2,-.45,.60);
+     add(`Aproveitamento no gol ${Math.round(pct*100)}%`,adj);
+   }
+   if(gkSec>=120&&ga===0)add('Sem sofrer gol no período de goleiro',.35);
+ }
+ const sample=.55+.45*part,rating=clamp(6+(raw-6)*sample,3,10);
+ return {rating,raw,part,weight:.35+.65*part,parts,savePct:(saves+ga)>0?saves/(saves+ga):null};
+}
+function aggregatePerformance(rows){
+ const rated=(rows||[]).filter(r=>Number(r.play_seconds||0)>0).map(r=>({...r,...performanceRating(r)}));
+ if(!rated.length)return null;
+ const wavg=a=>{const w=a.reduce((s,x)=>s+x.weight,0)||1;return a.reduce((s,x)=>s+x.rating*x.weight,0)/w};
+ const hist=wavg(rated),recentRows=[...rated].sort((a,b)=>String(b.session_date).localeCompare(String(a.session_date))||Number(b.sequence_no)-Number(a.sequence_no)).slice(0,8);
+ let rw=0,rs=0;recentRows.forEach((x,i)=>{const w=x.weight*Math.pow(.90,i);rw+=w;rs+=x.rating*w});const recent=rw?rs/rw:hist;
+ const minutes=rated.reduce((s,x)=>s+Number(x.play_seconds||0),0)/60,matches=rated.length;
+ const confidence=clamp((1-Math.exp(-matches/12))*.45+(1-Math.exp(-minutes/120))*.55,0,1);
+ const overall=clamp(6+((hist*.70+recent*.30)-6)*(.45+.55*confidence),3,10);
+ const formRows=recentRows.slice(0,5),form=formRows.length?formRows.reduce((s,x)=>s+x.rating,0)/formRows.length:hist;
+ const totals={matches,minutes,play_seconds:rated.reduce((s,x)=>s+Number(x.play_seconds||0),0),line_seconds:rated.reduce((s,x)=>s+Number(x.line_seconds||0),0),goalkeeper_seconds:rated.reduce((s,x)=>s+Number(x.goalkeeper_seconds||0),0),goals:0,assists:0,saves:0,goals_conceded:0,own_goals:0,penalty_goals:0,penalty_saves:0,wins:0,draws:0,losses:0};
+ rated.forEach(x=>{for(const k of ['goals','assists','saves','goals_conceded','own_goals','penalty_goals','penalty_saves'])totals[k]+=Number(x[k]||0);if(!x.winner_side)totals.draws++;else if(x.winner_side===x.side)totals.wins++;else totals.losses++});
+ const shots=totals.saves+totals.goals_conceded,savePct=shots?totals.saves/shots:null,winPct=matches?totals.wins/matches:0,lineEq=Math.max(1,totals.line_seconds/420);
+ const badges=[];
+ if(totals.goals>=3&&totals.goals/lineEq>=.45)badges.push('⚽ Finalizador');
+ if(totals.assists>=3&&totals.assists/lineEq>=.28)badges.push('🎯 Garçom');
+ if(shots>=8&&savePct>=.65)badges.push('🧤 Paredão');
+ if(matches>=8&&winPct>=.60)badges.push('🏆 Vencedor');
+ if(matches>=5&&form>=overall+.25)badges.push('🔥 Em boa fase');
+ const confidenceLabel=confidence<.35?'Amostra pequena':confidence<.70?'Em consolidação':'Nota consolidada';
+ return {rated,hist,recent,overall,form,confidence,confidenceLabel,totals,savePct,badges:badges.slice(0,3),recentRows};
+}
+async function playerCard(playerId){
+ const player=S.players.find(p=>p.id===playerId)||S.sp.find(x=>x.player_id===playerId)?.players;
+ if(!player)return;
+ const {data,error}=await sb.from('match_player_performance').select('*').eq('player_id',playerId).order('session_date',{ascending:false}).order('sequence_no',{ascending:false});
+ if(error)return alert(error.message);
+ const a=aggregatePerformance(data||[]);
+ if(!a)return alert('Esse jogador ainda não tem partidas finalizadas para gerar uma nota.');
+ const t=a.totals,last=a.recentRows.slice(0,5),latest=a.recentRows[0],latestParts=latest?.parts||[];
+ const pct=a.savePct===null?'-':Math.round(a.savePct*100)+'%';
+ $('#modal').innerHTML=`<div class="modalBack"><div class="modal" style="max-width:620px"><div class="spread"><div><div class="muted">CARTÃO DO JOGADOR</div><h2 style="margin:3px 0">${esc(player.name)}</h2><div class="row">${a.badges.map(x=>`<span class="pill">${x}</span>`).join('')}</div></div><div style="text-align:center"><div style="font-size:38px;font-weight:950">${a.overall.toFixed(1)}</div><div class="muted">OVERALL</div></div></div><div class="grid g3" style="margin-top:12px"><div class="item"><div class="muted">Forma</div><div class="big">${a.form.toFixed(1)}</div></div><div class="item"><div class="muted">Partidas</div><div class="big">${t.matches}</div></div><div class="item"><div class="muted">Tempo</div><div class="big">${tsec(t.play_seconds)}</div></div></div><div class="grid g3" style="margin-top:8px"><div class="item">⚽ <b>${t.goals}</b><div class="muted">gols</div></div><div class="item">🎯 <b>${t.assists}</b><div class="muted">assistências</div></div><div class="item">🏆 <b>${t.wins}</b><div class="muted">vitórias</div></div></div><div class="grid g3" style="margin-top:8px"><div class="item">🧤 <b>${t.saves}</b><div class="muted">defesas</div></div><div class="item">🥅 <b>${pct}</b><div class="muted">% defesas</div></div><div class="item">⏱ <b>${tsec(t.goalkeeper_seconds)}</b><div class="muted">no gol</div></div></div><div class="card" style="margin-top:10px"><div class="spread"><b>Últimas 5 partidas</b><span class="pill">${a.confidenceLabel}</span></div><div class="row" style="margin-top:8px">${last.map(x=>`<span class="pill" title="${x.session_date} #${x.sequence_no}">${x.rating.toFixed(1)}</span>`).join('')}</div><div class="muted" style="margin-top:8px">Overall: 70% histórico + 30% fase recente, com fator de confiança conforme aumentam partidas e minutos registrados.</div></div>${latest?`<details class="card" style="margin-top:10px"><summary><b>Por que a última nota foi ${latest.rating.toFixed(1)}?</b></summary><div class="list" style="margin-top:8px"><div class="item spread"><span>Base da partida</span><b>6,0</b></div>${latestParts.map(p=>`<div class="item spread"><span>${esc(p.label)}</span><b>${p.value>0?'+':''}${p.value.toFixed(2)}</b></div>`).join('')}<div class="item spread"><span>Participação</span><b>${Math.round(latest.part*100)}%</b></div><div class="item spread"><span>Nota final</span><b>${latest.rating.toFixed(1)}</b></div></div></details>`:''}<h4>Últimas partidas</h4><div class="list">${a.recentRows.slice(0,8).map(x=>`<div class="item spread"><div><b>${new Date(x.session_date+'T12:00:00').toLocaleDateString('pt-BR')} · Jogo #${x.sequence_no}</b><div class="muted">${tsec(x.play_seconds)} · ⚽ ${x.goals} · 🎯 ${x.assists} · 🧤 ${x.saves}</div></div><span class="pill">${x.rating.toFixed(1)}</span></div>`).join('')}</div><button id="closePlayerCard" class="btn ghost" style="width:100%;margin-top:12px">Fechar</button></div></div>`;
+ $('#closePlayerCard').onclick=()=>$('#modal').innerHTML='';
+}
 async function dailyHighlights(){
- const finished=S.matches.filter(m=>m.status==='finished'),ids=finished.map(m=>m.id);if(!ids.length)return alert('Ainda não há partida encerrada hoje.');
- const [er,pr,mpr]=await Promise.all([
-  sb.from('match_events').select('*').in('match_id',ids).eq('voided',false),
-  sb.from('penalties').select('*').in('match_id',ids).eq('voided',false),
-  sb.from('match_players').select('match_id,player_id,side').in('match_id',ids)
- ]);
- const names=Object.fromEntries(S.players.map(p=>[p.id,p.name])),stats={};
- const get=id=>stats[id]||(stats[id]={id,name:names[id]||'Jogador',goals:0,assists:0,saves:0,penGoals:0,penSaves:0,wins:0,points:0,rating:0});
- for(const e of (er.data||[])){if(e.event_type==='goal'&&!e.metadata?.own_goal){get(e.player_id).goals++;if(e.assist_player_id)get(e.assist_player_id).assists++}if(e.event_type==='save'&&e.goalkeeper_id)get(e.goalkeeper_id).saves++}
- for(const p of (pr.data||[])){if(p.result==='goal')get(p.shooter_id).penGoals++;if(p.result==='saved')get(p.goalkeeper_id).penSaves++}
- const byMatch={};for(const mp of (mpr.data||[]))(byMatch[mp.match_id]||(byMatch[mp.match_id]=[])).push(mp);
- for(const m of finished)if(m.winner_side)for(const mp of (byMatch[m.id]||[]))if(mp.side===m.winner_side)get(mp.player_id).wins++;
- const w=S.settings?.daily_rating_weights||{goal:2,assist:1.2,win:.6,save:.18,penalty_goal:.5,penalty_save:1};
- const arr=Object.values(stats);for(const x of arr){x.points=x.goals*Number(w.goal||2)+x.assists*Number(w.assist||1.2)+x.wins*Number(w.win||.6)+x.saves*Number(w.save||.18)+x.penGoals*Number(w.penalty_goal||.5)+x.penSaves*Number(w.penalty_save||1);x.rating=Math.min(10,Math.max(5,5+x.points));await sb.from('daily_ratings').upsert({session_id:S.session.id,player_id:x.id,rating:x.rating,data:x,updated_at:new Date().toISOString()},{onConflict:'session_id,player_id'})}
+ const {data,error}=await sb.from('match_player_performance').select('*').eq('session_id',S.session.id);
+ if(error)return alert(error.message);if(!data?.length)return alert('Ainda não há partida encerrada hoje.');
+ const groups={};for(const r of data)(groups[r.player_id]||(groups[r.player_id]=[])).push(r);
+ const arr=[];
+ for(const [id,rows] of Object.entries(groups)){
+   const a=aggregatePerformance(rows);if(!a)continue;
+   const t=a.totals,x={id,name:rows[0]?.name||'Jogador',rating:a.hist,goals:t.goals,assists:t.assists,saves:t.saves,penSaves:t.penalty_saves,goalkeeper_seconds:t.goalkeeper_seconds,savePct:a.savePct,wins:t.wins,matches:t.matches,play_seconds:t.play_seconds};
+   arr.push(x);
+   await sb.from('daily_ratings').upsert({session_id:S.session.id,player_id:id,rating:x.rating,data:x,updated_at:new Date().toISOString()},{onConflict:'session_id,player_id'});
+ }
  arr.sort((a,b)=>b.rating-a.rating||b.goals-a.goals||b.assists-a.assists);
- const top=(key)=>[...arr].sort((a,b)=>b[key]-a[key])[0];
- $('#modal').innerHTML=`<div class="modalBack"><div class="modal"><div class="spread"><h3>🔥 Destaques do Dia</h3><button id="closeHighlights" class="btn ghost">Fechar</button></div><div class="grid g2"><div class="item">🏆 Craque<br><b>${arr[0]?.name||'-'}</b></div><div class="item">⚽ Artilheiro<br><b>${top('goals')?.name||'-'}</b></div><div class="item">🎯 Garçom<br><b>${top('assists')?.name||'-'}</b></div><div class="item">🧤 Melhor goleiro<br><b>${top('saves')?.name||'-'}</b></div></div><h4>Top 5</h4><div class="list">${arr.slice(0,5).map((x,i)=>`<div class="item spread"><b>${i+1}. ${esc(x.name)}</b><span class="pill">${x.rating.toFixed(1)}</span></div>`).join('')}</div></div></div>`;
+ const top=(key)=>[...arr].sort((a,b)=>Number(b[key]||0)-Number(a[key]||0))[0];
+ const keepers=arr.filter(x=>x.goalkeeper_seconds>0).sort((a,b)=>((Number(b.savePct||0)*1.5)+b.saves*.12+b.penSaves*.75)-((Number(a.savePct||0)*1.5)+a.saves*.12+a.penSaves*.75));
+ $('#modal').innerHTML=`<div class="modalBack"><div class="modal"><div class="spread"><h3>🔥 Destaques do Dia</h3><button id="closeHighlights" class="btn ghost">Fechar</button></div><div class="grid g2"><button class="item" data-card="${arr[0]?.id||''}">🏆 Craque<br><b>${esc(arr[0]?.name||'-')}</b><div class="pill" style="margin-top:5px">${arr[0]?.rating?.toFixed(1)||'-'}</div></button><button class="item" data-card="${top('goals')?.id||''}">⚽ Artilheiro<br><b>${esc(top('goals')?.name||'-')}</b></button><button class="item" data-card="${top('assists')?.id||''}">🎯 Garçom<br><b>${esc(top('assists')?.name||'-')}</b></button><button class="item" data-card="${keepers[0]?.id||''}">🧤 Melhor goleiro<br><b>${esc(keepers[0]?.name||'-')}</b></button></div><h4>Top 5 da pelada</h4><div class="list">${arr.slice(0,5).map((x,i)=>`<button class="item spread" data-card="${x.id}" style="width:100%;text-align:left"><div><b>${i+1}. ${esc(x.name)}</b><div class="muted">${x.matches} jogos · ${tsec(x.play_seconds)}</div></div><span class="pill">${x.rating.toFixed(1)}</span></button>`).join('')}</div></div></div>`;
  $('#closeHighlights').onclick=()=>$('#modal').innerHTML='';
+ $$('[data-card]').forEach(b=>b.onclick=()=>{const id=b.dataset.card;if(id)playerCard(id)});
 }
 function players(){
  let pm=Object.fromEntries(S.payments.map(x=>[x.player_id,x]));
- $('#content').innerHTML=`<div class="card spread"><div><h3>Jogadores de hoje</h3><div class="muted">Chegada, função e pagamento.</div></div><button id="add" class="btn primary">+ Adicionar</button></div><div class="list" style="margin-top:10px">${S.sp.length?S.sp.map(x=>`<div class="item spread"><div><b>${esc(x.players.name)}</b><div class="muted">${x.status} · ${x.fixed_goalkeeper_active?'🧤 Goleiro fixo hoje':x.players.is_fixed_goalkeeper?'🧤 Goleiro fixo (liberado para linha hoje)':x.players.can_play_goalkeeper?'Pode ir ao gol':'Somente linha'}</div></div><div class="row"><span class="pill">${pm[x.player_id]?.status==='paid'?fmt(pm[x.player_id].amount):pm[x.player_id]?.status||'pendente'}</span><button class="btn ghost" data-edit-player="${x.player_id}">Editar</button>${pm[x.player_id]?.status==='pending'?'<button class="btn primary" data-receive="'+x.player_id+'">Receber</button>':''}${x.status!=='left'?'<button class="btn red" data-left="'+x.id+'">Sair</button>':''}</div></div>`).join(''):'<div class="card empty">Nenhum jogador hoje.</div>'}</div>`;
+ $('#content').innerHTML=`<div class="card spread"><div><h3>Jogadores de hoje</h3><div class="muted">Chegada, função e pagamento.</div></div><button id="add" class="btn primary">+ Adicionar</button></div><div class="list" style="margin-top:10px">${S.sp.length?S.sp.map(x=>`<div class="item spread"><div><b>${esc(x.players.name)}</b><div class="muted">${x.status} · ${x.fixed_goalkeeper_active?'🧤 Goleiro fixo hoje':x.players.is_fixed_goalkeeper?'🧤 Goleiro fixo (liberado para linha hoje)':x.players.can_play_goalkeeper?'Pode ir ao gol':'Somente linha'}</div></div><div class="row"><span class="pill">${pm[x.player_id]?.status==='paid'?fmt(pm[x.player_id].amount):pm[x.player_id]?.status||'pendente'}</span><button class="btn ghost" data-card-player="${x.player_id}">Cartão</button><button class="btn ghost" data-edit-player="${x.player_id}">Editar</button>${pm[x.player_id]?.status==='pending'?'<button class="btn primary" data-receive="'+x.player_id+'">Receber</button>':''}${x.status!=='left'?'<button class="btn red" data-left="'+x.id+'">Sair</button>':''}</div></div>`).join(''):'<div class="card empty">Nenhum jogador hoje.</div>'}</div>`;
  $('#add').onclick=addPlayer;
- $$('[data-edit-player]').forEach(b=>b.onclick=()=>editPlayerProfile(b.dataset.editPlayer));
+ $('[data-card-player]').forEach(b=>b.onclick=()=>playerCard(b.dataset.cardPlayer));
+ $('[data-edit-player]').forEach(b=>b.onclick=()=>editPlayerProfile(b.dataset.editPlayer));
  $$('[data-left]').forEach(b=>b.onclick=async()=>{const ok=await confirmAction('Jogador vai embora?','Ele sairá da pelada de hoje, mas continuará cadastrado para outras datas.','OK');if(!ok)return;await sb.from('session_players').update({status:'left',left_at:new Date().toISOString(),voluntarily_resting:false}).eq('id',b.dataset.left);refresh()});
  $$('[data-receive]').forEach(b=>b.onclick=()=>receivePayment(b.dataset.receive));
 }
@@ -675,7 +734,14 @@ async function createNext(left,right,reusedIds=[]){
 }
 async function judgeAccess(){let raw=crypto.getRandomValues(new Uint8Array(8)),token=[...raw].map(x=>x.toString(36)).join('').slice(0,12),buf=await crypto.subtle.digest('SHA-256',new TextEncoder().encode(token)),hash=[...new Uint8Array(buf)].map(b=>b.toString(16).padStart(2,'0')).join('');await sb.from('judge_sessions').insert({match_id:S.active.id,token_hash:hash,expires_at:new Date(Date.now()+10800000).toISOString()});let u=location.origin+location.pathname+'?judge='+token;await navigator.clipboard?.writeText(u);alert('Link do juiz copiado. Expira em 3 horas.')}
 function cash(){let d=S.cash.filter(x=>x.session_id===S.session.id),inc=d.filter(x=>x.entry_type==='income').reduce((a,b)=>a+Number(b.amount),0),exp=d.filter(x=>x.entry_type==='expense').reduce((a,b)=>a+Number(b.amount),0),tot=S.cash.reduce((a,b)=>a+(b.entry_type==='income'?Number(b.amount):-Number(b.amount)),0);$('#content').innerHTML=`<div class="grid g3"><div class="card"><div class="muted">Entradas hoje</div><div class="big">${fmt(inc)}</div></div><div class="card"><div class="muted">Despesas hoje</div><div class="big">${fmt(exp)}</div></div><div class="card"><div class="muted">Caixa acumulado</div><div class="big">${fmt(tot)}</div></div></div><div class="card" style="margin-top:10px"><div class="spread"><h3>Movimentações</h3><button id="ex" class="btn primary">+ Despesa</button></div><div class="list">${d.map(x=>`<div class="item spread"><b>${esc(x.description)}</b><b>${x.entry_type==='expense'?'-':'+'}${fmt(x.amount)}</b></div>`).join('')||'<div class="empty">Sem movimentações.</div>'}</div></div>`;$('#ex').onclick=async()=>{let desc=prompt('Descrição','Campo'),val=Number(prompt('Valor','250')||0);if(desc&&val>0){await sb.from('cash_entries').insert({session_id:S.session.id,owner_id:S.user.id,entry_type:'expense',description:desc,amount:val});refresh()}}}
-async function rank(){let{data}=await sb.from('player_career_stats').select('*').eq('owner_id',S.user.id);let a=(data||[]).sort((x,y)=>Number(y.goals)-Number(x.goals)||Number(y.assists)-Number(x.assists));$('#content').innerHTML=`<div class="card"><h3>Ranking consolidado</h3><p class="muted">A Nota do Dia fica separada.</p></div><div class="list" style="margin-top:10px">${a.map((x,i)=>`<div class="item spread"><div><b>${i+1}. ${esc(x.name)}</b><div class="muted">${x.matches} jogos · ${tsec(x.play_seconds)}</div></div><div>⚽ ${x.goals} · 🎯 ${x.assists} · 🧤 ${x.saves}</div></div>`).join('')||'<div class="card empty">Sem estatísticas ainda.</div>'}</div>`}
+async function rank(){
+ const {data,error}=await sb.from('match_player_performance').select('*').eq('owner_id',S.user.id);
+ if(error)return $('#content').innerHTML=`<div class="card empty">${esc(error.message)}</div>`;
+ const groups={};for(const r of (data||[]))(groups[r.player_id]||(groups[r.player_id]=[])).push(r);
+ const a=Object.entries(groups).map(([id,rows])=>({id,name:rows[0]?.name||'Jogador',...aggregatePerformance(rows)})).filter(x=>x.overall!=null).sort((x,y)=>y.overall-x.overall||y.form-x.form);
+ $('#content').innerHTML=`<div class="card"><h3>Ranking Overall</h3><p class="muted">Nota de 0 a 10 baseada no desempenho histórico, fase recente, minutos e tamanho da amostra. Toque no jogador para abrir o cartão.</p></div><div class="list" style="margin-top:10px">${a.map((x,i)=>`<button class="item spread" data-rank-card="${x.id}" style="width:100%;text-align:left"><div><b>${i+1}. ${esc(x.name)}</b><div class="muted">${x.totals.matches} jogos · ${tsec(x.totals.play_seconds)} · Forma ${x.form.toFixed(1)}</div></div><div style="text-align:right"><div class="big">${x.overall.toFixed(1)}</div><div class="muted">⚽ ${x.totals.goals} · 🎯 ${x.totals.assists} · 🧤 ${x.totals.saves}</div></div></button>`).join('')||'<div class="card empty">Sem estatísticas ainda.</div>'}</div>`;
+ $$('[data-rank-card]').forEach(b=>b.onclick=()=>playerCard(b.dataset.rankCard));
+}
 async function history(){let{data}=await sb.from('sessions').select('*').eq('owner_id',S.user.id).order('session_date',{ascending:false});$('#content').innerHTML=`<div class="card"><h3>Histórico</h3><p class="muted">Abra uma data para reconstruir a pelada.</p></div><div class="list" style="margin-top:10px">${(data||[]).map(x=>`<button class="item" style="text-align:left" data-history="${x.id}"><b>${new Date(x.session_date+'T12:00:00').toLocaleDateString('pt-BR')}</b><div class="muted">${x.status}</div></button>`).join('')||'<div class="card empty">Sem histórico.</div>'}</div>`;$$('[data-history]').forEach(b=>b.onclick=()=>historyDetail(b.dataset.history))}
 async function historyDetail(sessionId){
  const [sr,sp,mt,ce,dr]=await Promise.all([sb.from('sessions').select('*').eq('id',sessionId).single(),sb.from('session_players').select('*,players(*)').eq('session_id',sessionId),sb.from('matches').select('*').eq('session_id',sessionId).order('sequence_no'),sb.from('cash_entries').select('*').eq('session_id',sessionId),sb.from('daily_ratings').select('*,players(name)').eq('session_id',sessionId).order('rating',{ascending:false})]);
