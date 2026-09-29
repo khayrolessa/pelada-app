@@ -539,13 +539,13 @@ function sideP(side){return S.mp.filter(x=>x.side===side&&!x.exited_at)}function
 function judge(){
  if(!S.active)return $('#content').innerHTML='<div class="card empty">Nenhuma partida ativa. Vá até Fila e forme a partida.</div>';
  let m=S.active,max=S.settings?.match_duration_seconds||420,rem=Math.max(0,max-elapsed(m)),endPending=matchEndReached(m),tm=side=>sideP(side).map(x=>`<div class="player ${x.is_goalkeeper?'gk':''}">${x.is_goalkeeper?'🧤':'⚽'} ${esc(x.players.name)}</div>`).join(''),missing=side=>!sideP(side).some(x=>x.is_goalkeeper);
- $('#content').innerHTML=`<div class="score"><div class="clock" id="clock">${tsec(rem)}</div><div class="scoreline">${m.left_score} × ${m.right_score}</div>${endPending?`<div class="card" style="margin:10px 0;border:2px solid #f0b429"><h3>🏁 Limite da partida atingido</h3><div class="muted">Você ainda pode registrar ou desfazer um lance antes de confirmar.</div><button id="confirmMatchEnd" class="btn amber" style="margin-top:8px;width:100%">Confirmar fim da partida</button></div>`:''}<div class="teams"><div class="team"><h4 style="font-size:18px">⬅️ TIME ESQUERDO</h4>${missing('left')?'<div class="pill">⚠️ Goleiro não definido</div>':''}${tm('left')}<div class="gameBtns"><button class="btn primary" data-goal="left">⚽ Gol</button><button class="btn blue" data-save="left">🧤 Defesa</button></div></div><div class="team"><h4 style="font-size:18px;text-align:right">TIME DIREITO ➡️</h4>${missing('right')?'<div class="pill">⚠️ Goleiro não definido</div>':''}${tm('right')}<div class="gameBtns"><button class="btn primary" data-goal="right">⚽ Gol</button><button class="btn blue" data-save="right">🧤 Defesa</button></div></div></div><div class="row" style="margin-top:10px"><button id="start" class="btn amber" ${endPending?'disabled':''}>${endPending?'🏁 Aguardando confirmação':m.status==='scheduled'?'▶ Iniciar':m.status==='paused'?'▶ Retomar':'⏸ Pausar'}</button><button id="ownGoal" class="btn red">⚽ Gol contra</button><button id="swap" class="btn">🔄 Trocar goleiro</button>${m.status==='scheduled'?'<button id="lineup" class="btn">✏️ Ajustar escalação</button>':'<button id="substitute" class="btn">🔁 Substituir jogador</button>'}<button id="undo" class="btn red">↩ Desfazer</button><button id="end" class="btn ghost">🏁 Encerrar</button><button id="share" class="btn ghost">📱 Acesso juiz</button></div></div><div class="card" style="margin-top:10px"><h3>Súmula</h3>${S.events.filter(x=>!x.voided).slice().reverse().map(e=>`<div>${e.event_type==='goal'?(e.metadata?.own_goal?'⚽ Gol contra':'⚽ Gol'):e.event_type==='save'?'🧤 Defesa':e.metadata?.substitution?'🔁 Substituição':'🔄 '+e.event_type} · ${tsec(e.match_second||0)}</div>`).join('')||'<div class="empty">Sem eventos.</div>'}</div>`;
+ $('#content').innerHTML=`<div class="score"><div class="clock" id="clock">${tsec(rem)}</div><div class="scoreline">${m.left_score} × ${m.right_score}</div>${endPending?`<div class="card" style="margin:10px 0;border:2px solid #f0b429"><h3>🏁 Limite da partida atingido</h3><div class="muted">Você ainda pode registrar ou desfazer um lance antes de confirmar.</div><button id="confirmMatchEnd" class="btn amber" style="margin-top:8px;width:100%">Confirmar fim da partida</button></div>`:''}<div class="teams"><div class="team"><h4 style="font-size:18px">⬅️ TIME ESQUERDO</h4>${missing('left')?'<div class="pill">⚠️ Goleiro não definido</div>':''}${tm('left')}<div class="gameBtns"><button class="btn primary" data-goal="left">⚽ Gol</button><button class="btn blue" data-save="left">🧤 Defesa</button></div></div><div class="team"><h4 style="font-size:18px;text-align:right">TIME DIREITO ➡️</h4>${missing('right')?'<div class="pill">⚠️ Goleiro não definido</div>':''}${tm('right')}<div class="gameBtns"><button class="btn primary" data-goal="right">⚽ Gol</button><button class="btn blue" data-save="right">🧤 Defesa</button></div></div></div><div class="row" style="margin-top:10px"><button id="start" class="btn amber" ${endPending?'disabled':''}>${endPending?'🏁 Aguardando confirmação':m.status==='scheduled'?'▶ Iniciar':m.status==='paused'?'▶ Retomar':'⏸ Pausar'}</button><button id="ownGoal" class="btn red">⚽ Gol contra</button><button id="swap" class="btn">🔄 Trocar goleiro</button>${m.status==='scheduled'?'<button id="lineup" class="btn">✏️ Ajustar escalação</button>':'<button id="substitute" class="btn">🔁 Substituir jogador</button>'}<button id="undo" class="btn red">↩ Desfazer</button><button id="end" class="btn ghost">🏁 Encerrar</button><button id="share" class="btn ghost">📱 Acesso juiz</button><button id="tv" class="btn ghost">📺 Placar/TV</button></div></div><div class="card" style="margin-top:10px"><h3>Súmula</h3>${S.events.filter(x=>!x.voided).slice().reverse().map(e=>`<div>${e.event_type==='goal'?(e.metadata?.own_goal?'⚽ Gol contra':'⚽ Gol'):e.event_type==='save'?'🧤 Defesa':e.metadata?.substitution?'🔁 Substituição':'🔄 '+e.event_type} · ${tsec(e.match_second||0)}</div>`).join('')||'<div class="empty">Sem eventos.</div>'}</div>`;
  $$('[data-goal]').forEach(b=>b.onclick=()=>goalFlow(b.dataset.goal));
  $$('[data-save]').forEach(b=>b.onclick=()=>save(b.dataset.save));
  $('#start').onclick=()=>{if(!matchEndReached())toggleTimer()};
  $('#ownGoal').onclick=ownGoalFlow;
  $('#lineup')?.addEventListener('click',adjustLineup);$('#substitute')?.addEventListener('click',midMatchSubstitution);
- $('#swap').onclick=swapGk;$('#undo').onclick=undo;$('#end').onclick=finish;$('#share').onclick=judgeAccess;
+ $('#swap').onclick=swapGk;$('#undo').onclick=undo;$('#end').onclick=finish;$('#share').onclick=judgeAccess;$('#tv').onclick=tvAccess;
  $('#confirmMatchEnd')?.addEventListener('click',()=>finish());
  clearInterval(S.timer);let endNoticed=false;S.timer=setInterval(()=>{let clock=$('#clock'),left=Math.max(0,max-elapsed(S.active));if(clock)clock.textContent=tsec(left);if(left<=0&&S.active?.status==='live'&&!endNoticed){endNoticed=true;markEndPending()}},1000);
 }
@@ -843,7 +843,30 @@ async function createNext(left,right,reusedIds=[]){
    }
  }
 }
-async function judgeAccess(){let raw=crypto.getRandomValues(new Uint8Array(8)),token=[...raw].map(x=>x.toString(36)).join('').slice(0,12),buf=await crypto.subtle.digest('SHA-256',new TextEncoder().encode(token)),hash=[...new Uint8Array(buf)].map(b=>b.toString(16).padStart(2,'0')).join('');await sb.from('judge_sessions').insert({match_id:S.active.id,token_hash:hash,expires_at:new Date(Date.now()+10800000).toISOString()});let u=location.origin+location.pathname+'?judge='+token;await navigator.clipboard?.writeText(u);alert('Link do juiz copiado. Expira em 3 horas.')}
+async function makeAccessToken(mode){
+ const raw=crypto.getRandomValues(new Uint8Array(12)),token=[...raw].map(x=>x.toString(36)).join('').slice(0,18),buf=await crypto.subtle.digest('SHA-256',new TextEncoder().encode(token)),hash=[...new Uint8Array(buf)].map(b=>b.toString(16).padStart(2,'0')).join('');
+ const row=mode==='tv'
+   ?{session_id:S.session.id,access_mode:'tv',token_hash:hash,expires_at:new Date(Date.now()+28800000).toISOString()}
+   :{match_id:S.active.id,access_mode:'judge',token_hash:hash,expires_at:new Date(Date.now()+10800000).toISOString()};
+ const {error}=await sb.from('judge_sessions').insert(row);if(error)throw error;
+ return token;
+}
+async function judgeAccess(){
+ if(!S.active)return alert('Não há partida ativa.');
+ try{
+   const token=await makeAccessToken('judge'),u=location.origin+location.pathname+'?judge='+token;
+   try{await navigator.clipboard.writeText(u)}catch{}
+   alert('Link do juiz copiado. Expira em 3 horas.');
+ }catch(e){alert(e.message||String(e))}
+}
+async function tvAccess(){
+ try{
+   const token=await makeAccessToken('tv'),u=location.origin+location.pathname+'?tv='+token;
+   try{await navigator.clipboard.writeText(u)}catch{}
+   const ok=await confirmAction('Modo TV pronto','O link somente leitura foi copiado e acompanha as próximas partidas desta pelada. Deseja abrir agora?','Abrir');
+   if(ok){const w=window.open(u,'_blank');if(!w)location.href=u}
+ }catch(e){alert(e.message||String(e))}
+}
 function cash(){let d=S.cash.filter(x=>x.session_id===S.session.id),inc=d.filter(x=>x.entry_type==='income').reduce((a,b)=>a+Number(b.amount),0),exp=d.filter(x=>x.entry_type==='expense').reduce((a,b)=>a+Number(b.amount),0),tot=S.cash.reduce((a,b)=>a+(b.entry_type==='income'?Number(b.amount):-Number(b.amount)),0);$('#content').innerHTML=`<div class="grid g3"><div class="card"><div class="muted">Entradas hoje</div><div class="big">${fmt(inc)}</div></div><div class="card"><div class="muted">Despesas hoje</div><div class="big">${fmt(exp)}</div></div><div class="card"><div class="muted">Caixa acumulado</div><div class="big">${fmt(tot)}</div></div></div><div class="card" style="margin-top:10px"><div class="spread"><h3>Movimentações</h3><button id="ex" class="btn primary">+ Despesa</button></div><div class="list">${d.map(x=>`<div class="item spread"><b>${esc(x.description)}</b><b>${x.entry_type==='expense'?'-':'+'}${fmt(x.amount)}</b></div>`).join('')||'<div class="empty">Sem movimentações.</div>'}</div></div>`;$('#ex').onclick=async()=>{let desc=prompt('Descrição','Campo'),val=Number(prompt('Valor','250')||0);if(desc&&val>0){await sb.from('cash_entries').insert({session_id:S.session.id,owner_id:S.user.id,entry_type:'expense',description:desc,amount:val});refresh()}}}
 async function rank(){
  const {data,error}=await sb.from('match_player_performance').select('*').eq('owner_id',S.user.id);
@@ -859,6 +882,32 @@ async function historyDetail(sessionId){
  const income=(ce.data||[]).filter(x=>x.entry_type==='income').reduce((a,b)=>a+Number(b.amount),0),expense=(ce.data||[]).filter(x=>x.entry_type==='expense').reduce((a,b)=>a+Number(b.amount),0),ids=(mt.data||[]).map(x=>x.id);
  let events=[],pens=[];if(ids.length){const[e,p]=await Promise.all([sb.from('match_events').select('*').in('match_id',ids).eq('voided',false),sb.from('penalties').select('*').in('match_id',ids).eq('voided',false)]);events=e.data||[];pens=p.data||[]}
  $('#modal').innerHTML=`<div class="modalBack"><div class="modal"><div class="spread"><div><h3>Pelada de ${new Date(sr.data.session_date+'T12:00:00').toLocaleDateString('pt-BR')}</h3><div class="muted">${sp.data?.length||0} jogadores · ${mt.data?.filter(x=>x.status==='finished').length||0} partidas</div></div><button id="closeHist" class="btn ghost">Fechar</button></div><div class="grid g3" style="margin-top:10px"><div class="item"><div class="muted">Gols</div><div class="big">${events.filter(x=>x.event_type==='goal').length}</div></div><div class="item"><div class="muted">Pênaltis</div><div class="big">${pens.length}</div></div><div class="item"><div class="muted">Saldo</div><div class="big">${fmt(income-expense)}</div></div></div><h4>Partidas</h4><div class="list">${(mt.data||[]).map(m=>`<div class="item spread"><b>#${m.sequence_no} · ${m.left_score} × ${m.right_score}</b><span>${m.duration_seconds?tsec(m.duration_seconds):m.status}</span></div>`).join('')||'<div class="empty">Sem partidas.</div>'}</div>${dr.data?.length?`<h4>Notas do dia</h4><div class="list">${dr.data.slice(0,5).map(x=>`<div class="item spread"><b>${esc(x.players?.name||'')}</b><span class="pill">${Number(x.rating).toFixed(1)}</span></div>`).join('')}</div>`:''}</div></div>`;$('#closeHist').onclick=()=>$('#modal').innerHTML=''
+}
+
+async function bootTV(token){
+ const endpoint=URL+'/functions/v1/judge-action';
+ async function get(){const r=await fetch(endpoint+'?token='+encodeURIComponent(token),{headers:{apikey:KEY}}),j=await r.json();if(!r.ok)throw new Error(j.error||'Acesso inválido');return j}
+ function elapsedTV(m){let s=m.elapsed_before_pause_seconds||0;if(m.status==='live'&&m.started_at)s+=Math.max(0,Math.floor((Date.now()-new Date(m.started_at).getTime())/1000));return s}
+ function eventText(e,names){
+   if(!e)return 'Aguardando lances';
+   const n=names[e.player_id]||'Jogador';
+   if(e.event_type==='goal')return e.metadata?.own_goal?'⚽ Gol contra — '+n:'⚽ Gol — '+n;
+   if(e.event_type==='save')return '🧤 Defesa — '+n;
+   if(e.metadata?.substitution)return '🔁 Substituição';
+   if(e.event_type==='goalkeeper_change')return '🔄 Troca de goleiro';
+   return 'Último lance atualizado';
+ }
+ async function draw(){
+   try{
+     const s=await get(),m=s.match,duration=s.settings?.match_duration_seconds||420,elapsedSec=Math.min(duration,elapsedTV(m)),remaining=Math.max(0,duration-elapsedSec),side=x=>s.players.filter(p=>p.side===x),names=Object.fromEntries(s.players.map(p=>[p.player_id,p.players?.name||'Jogador'])),last=s.events.filter(e=>!e.voided).at(-1);
+     const status=s.session?.status==='closed'?'🏁 PELADA ENCERRADA':m.status==='scheduled'?'⏳ PRÓXIMA PARTIDA':m.status==='live'?'🟢 EM JOGO':m.status==='paused'?'⏸ PAUSADO':'🏁 PARTIDA ENCERRADA';
+     const team=sd=>side(sd).map(p=>`<div style="font-size:clamp(18px,2.3vw,34px);font-weight:800;padding:6px 0">${p.is_goalkeeper?'🧤':'⚽'} ${esc(p.players?.name||'')}</div>`).join('');
+     document.body.innerHTML=`<style>body{margin:0;background:#07140d;color:#fff;font-family:system-ui,-apple-system,sans-serif}.tvwrap{min-height:100vh;padding:clamp(16px,3vw,40px);box-sizing:border-box}.tvtop{display:flex;justify-content:space-between;align-items:center;gap:16px}.tvstatus{font-size:clamp(14px,2vw,24px);opacity:.8;font-weight:800}.tvclock{text-align:center;font-size:clamp(56px,11vw,150px);font-weight:950;line-height:1}.tvscore{text-align:center;font-size:clamp(64px,14vw,190px);font-weight:950;line-height:1;margin:4px 0 20px}.tvteams{display:grid;grid-template-columns:1fr 1fr;gap:clamp(14px,4vw,60px)}.tvteam{background:rgba(255,255,255,.07);border-radius:22px;padding:clamp(14px,2vw,28px)}.tvteam h2{font-size:clamp(22px,3vw,42px);margin:0 0 8px}.tvlast{margin-top:20px;text-align:center;font-size:clamp(18px,2.5vw,34px);font-weight:800;background:rgba(255,255,255,.08);padding:14px;border-radius:18px}@media(max-width:650px){.tvteams{grid-template-columns:1fr 1fr}.tvteam{padding:10px}.tvteam h2{font-size:18px}}</style><div class="tvwrap"><div class="tvtop"><div><div style="font-size:clamp(22px,3vw,40px);font-weight:950">⚽ PERNAS DE PAU</div><div class="tvstatus">${status}</div></div><div class="tvstatus">Partida #${m.sequence_no}</div></div><div class="tvclock">${tsec(remaining)}</div><div class="tvscore">${m.left_score} × ${m.right_score}</div><div class="tvteams"><div class="tvteam"><h2>⬅️ TIME ESQUERDO</h2>${team('left')}</div><div class="tvteam" style="text-align:right"><h2>TIME DIREITO ➡️</h2>${team('right')}</div></div><div class="tvlast">${esc(eventText(last,names))}</div></div>`;
+   }catch(e){
+     document.body.innerHTML=`<div style="min-height:100vh;display:grid;place-items:center;background:#07140d;color:white;font-family:system-ui;padding:24px;text-align:center"><div><div style="font-size:56px">📺</div><h2>Modo TV</h2><p>${esc(e.message||'Aguardando partida...')}</p><p style="opacity:.7">A tela atualizará automaticamente.</p></div></div>`;
+   }
+ }
+ draw();setInterval(draw,1000);
 }
 
 async function bootJudge(token){
