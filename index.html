@@ -157,7 +157,7 @@ async function dailyHighlights(){
  ]);
  const names=Object.fromEntries(S.players.map(p=>[p.id,p.name])),stats={};
  const get=id=>stats[id]||(stats[id]={id,name:names[id]||'Jogador',goals:0,assists:0,saves:0,penGoals:0,penSaves:0,wins:0,points:0,rating:0});
- for(const e of (er.data||[])){if(e.event_type==='goal'){get(e.player_id).goals++;if(e.assist_player_id)get(e.assist_player_id).assists++}if(e.event_type==='save'&&e.goalkeeper_id)get(e.goalkeeper_id).saves++}
+ for(const e of (er.data||[])){if(e.event_type==='goal'&&!e.metadata?.own_goal){get(e.player_id).goals++;if(e.assist_player_id)get(e.assist_player_id).assists++}if(e.event_type==='save'&&e.goalkeeper_id)get(e.goalkeeper_id).saves++}
  for(const p of (pr.data||[])){if(p.result==='goal')get(p.shooter_id).penGoals++;if(p.result==='saved')get(p.goalkeeper_id).penSaves++}
  const byMatch={};for(const mp of (mpr.data||[]))(byMatch[mp.match_id]||(byMatch[mp.match_id]=[])).push(mp);
  for(const m of finished)if(m.winner_side)for(const mp of (byMatch[m.id]||[]))if(mp.side===m.winner_side)get(mp.player_id).wins++;
@@ -354,17 +354,56 @@ async function createMatch(){
  await refresh();S.tab='judge';render();
 }
 function elapsed(m){let s=m?.elapsed_before_pause_seconds||0;if(m?.status==='live'&&m.started_at)s+=Math.floor((Date.now()-new Date(m.started_at))/1000);return s}
+function matchEndReached(m=S.active){
+ if(!m||m.status==='scheduled'||m.status==='finished')return false;
+ const max=S.settings?.match_duration_seconds||420,target=S.settings?.goals_to_win||2;
+ return elapsed(m)>=max||Number(m.left_score||0)>=target||Number(m.right_score||0)>=target;
+}
+async function markEndPending(){
+ const m=S.active;if(!m||m.status!=='live')return;
+ const max=S.settings?.match_duration_seconds||420,sec=Math.min(max,elapsed(m));
+ await sb.from('matches').update({status:'paused',elapsed_before_pause_seconds:sec,started_at:null,paused_at:new Date().toISOString()}).eq('id',m.id);
+ await refresh();
+}
 function sideP(side){return S.mp.filter(x=>x.side===side&&!x.exited_at)}function gk(side){return sideP(side).find(x=>x.is_goalkeeper)?.players||null}
 function judge(){
  if(!S.active)return $('#content').innerHTML='<div class="card empty">Nenhuma partida ativa. Vá até Fila e forme a partida.</div>';
- let m=S.active,max=S.settings?.match_duration_seconds||420,rem=Math.max(0,max-elapsed(m)),tm=side=>sideP(side).map(x=>`<div class="player ${x.is_goalkeeper?'gk':''}">${x.is_goalkeeper?'🧤':'⚽'} ${esc(x.players.name)}</div>`).join(''),missing=side=>!sideP(side).some(x=>x.is_goalkeeper);
- $('#content').innerHTML=`<div class="score"><div class="clock" id="clock">${tsec(rem)}</div><div class="scoreline">${m.left_score} × ${m.right_score}</div><div class="teams"><div class="team"><h4 style="font-size:18px">⬅️ TIME ESQUERDO</h4>${missing('left')?'<div class="pill">⚠️ Goleiro não definido</div>':''}${tm('left')}<div class="gameBtns"><button class="btn primary" data-goal="left">⚽ Gol</button><button class="btn blue" data-save="left">🧤 Defesa</button></div></div><div class="team"><h4 style="font-size:18px;text-align:right">TIME DIREITO ➡️</h4>${missing('right')?'<div class="pill">⚠️ Goleiro não definido</div>':''}${tm('right')}<div class="gameBtns"><button class="btn primary" data-goal="right">⚽ Gol</button><button class="btn blue" data-save="right">🧤 Defesa</button></div></div></div><div class="row" style="margin-top:10px"><button id="start" class="btn amber">${m.status==='scheduled'?'▶ Iniciar':m.status==='paused'?'▶ Retomar':'⏸ Pausar'}</button><button id="swap" class="btn">🔄 Trocar goleiro</button>${m.status==='scheduled'?'<button id="lineup" class="btn">✏️ Ajustar escalação</button>':'<button id="substitute" class="btn">🔁 Substituir jogador</button>'}<button id="undo" class="btn red">↩ Desfazer</button><button id="end" class="btn ghost">🏁 Encerrar</button><button id="share" class="btn ghost">📱 Acesso juiz</button></div></div><div class="card" style="margin-top:10px"><h3>Súmula</h3>${S.events.filter(x=>!x.voided).slice().reverse().map(e=>`<div>${e.event_type==='goal'?'⚽ Gol':e.event_type==='save'?'🧤 Defesa':e.metadata?.substitution?'🔁 Substituição':'🔄 '+e.event_type} · ${tsec(e.match_second||0)}</div>`).join('')||'<div class="empty">Sem eventos.</div>'}</div>`;
- $$('[data-goal]').forEach(b=>b.onclick=()=>goalFlow(b.dataset.goal));$$('[data-save]').forEach(b=>b.onclick=()=>save(b.dataset.save));$('#start').onclick=toggleTimer;$('#swap').onclick=swapGk;$('#lineup')?.addEventListener('click',adjustLineup);$('#substitute')?.addEventListener('click',midMatchSubstitution);$('#undo').onclick=undo;$('#end').onclick=finish;$('#share').onclick=judgeAccess;
- clearInterval(S.timer);let autoEnded=false;S.timer=setInterval(()=>{let c=$('#clock'),left=Math.max(0,max-elapsed(S.active));if(c)c.textContent=tsec(left);if(left<=0&&S.active?.status==='live'&&!autoEnded){autoEnded=true;finish(true)}},1000);
+ let m=S.active,max=S.settings?.match_duration_seconds||420,rem=Math.max(0,max-elapsed(m)),endPending=matchEndReached(m),tm=side=>sideP(side).map(x=>`<div class="player ${x.is_goalkeeper?'gk':''}">${x.is_goalkeeper?'🧤':'⚽'} ${esc(x.players.name)}</div>`).join(''),missing=side=>!sideP(side).some(x=>x.is_goalkeeper);
+ $('#content').innerHTML=`<div class="score"><div class="clock" id="clock">${tsec(rem)}</div><div class="scoreline">${m.left_score} × ${m.right_score}</div>${endPending?`<div class="card" style="margin:10px 0;border:2px solid #f0b429"><h3>🏁 Limite da partida atingido</h3><div class="muted">Você ainda pode registrar ou desfazer um lance antes de confirmar.</div><button id="confirmMatchEnd" class="btn amber" style="margin-top:8px;width:100%">Confirmar fim da partida</button></div>`:''}<div class="teams"><div class="team"><h4 style="font-size:18px">⬅️ TIME ESQUERDO</h4>${missing('left')?'<div class="pill">⚠️ Goleiro não definido</div>':''}${tm('left')}<div class="gameBtns"><button class="btn primary" data-goal="left">⚽ Gol</button><button class="btn blue" data-save="left">🧤 Defesa</button></div></div><div class="team"><h4 style="font-size:18px;text-align:right">TIME DIREITO ➡️</h4>${missing('right')?'<div class="pill">⚠️ Goleiro não definido</div>':''}${tm('right')}<div class="gameBtns"><button class="btn primary" data-goal="right">⚽ Gol</button><button class="btn blue" data-save="right">🧤 Defesa</button></div></div></div><div class="row" style="margin-top:10px"><button id="start" class="btn amber" ${endPending?'disabled':''}>${endPending?'🏁 Aguardando confirmação':m.status==='scheduled'?'▶ Iniciar':m.status==='paused'?'▶ Retomar':'⏸ Pausar'}</button><button id="ownGoal" class="btn red">⚽ Gol contra</button><button id="swap" class="btn">🔄 Trocar goleiro</button>${m.status==='scheduled'?'<button id="lineup" class="btn">✏️ Ajustar escalação</button>':'<button id="substitute" class="btn">🔁 Substituir jogador</button>'}<button id="undo" class="btn red">↩ Desfazer</button><button id="end" class="btn ghost">🏁 Encerrar</button><button id="share" class="btn ghost">📱 Acesso juiz</button></div></div><div class="card" style="margin-top:10px"><h3>Súmula</h3>${S.events.filter(x=>!x.voided).slice().reverse().map(e=>`<div>${e.event_type==='goal'?(e.metadata?.own_goal?'⚽ Gol contra':'⚽ Gol'):e.event_type==='save'?'🧤 Defesa':e.metadata?.substitution?'🔁 Substituição':'🔄 '+e.event_type} · ${tsec(e.match_second||0)}</div>`).join('')||'<div class="empty">Sem eventos.</div>'}</div>`;
+ $$('[data-goal]').forEach(b=>b.onclick=()=>goalFlow(b.dataset.goal));
+ $$('[data-save]').forEach(b=>b.onclick=()=>save(b.dataset.save));
+ $('#start').onclick=()=>{if(!matchEndReached())toggleTimer()};
+ $('#ownGoal').onclick=ownGoalFlow;
+ $('#lineup')?.addEventListener('click',adjustLineup);$('#substitute')?.addEventListener('click',midMatchSubstitution);
+ $('#swap').onclick=swapGk;$('#undo').onclick=undo;$('#end').onclick=finish;$('#share').onclick=judgeAccess;
+ $('#confirmMatchEnd')?.addEventListener('click',()=>finish());
+ clearInterval(S.timer);let endNoticed=false;S.timer=setInterval(()=>{let clock=$('#clock'),left=Math.max(0,max-elapsed(S.active));if(clock)clock.textContent=tsec(left);if(left<=0&&S.active?.status==='live'&&!endNoticed){endNoticed=true;markEndPending()}},1000);
 }
 function goalFlow(side){let ps=sideP(side);$('#modal').innerHTML=`<div class="modalBack"><div class="modal"><h3>Quem marcou?</h3><div class="choice">${ps.map(p=>`<button data-s="${p.player_id}">${esc(p.players.name)}</button>`).join('')}</div></div></div>`;$$('[data-s]').forEach(b=>b.onclick=()=>assistFlow(side,b.dataset.s))}
 function assistFlow(side,scorer){let ps=sideP(side).filter(p=>p.player_id!==scorer);$('#modal').innerHTML=`<div class="modalBack"><div class="modal"><h3>Quem deu a assistência?</h3><div class="choice"><button data-a="">Sem assistência</button>${ps.map(p=>`<button data-a="${p.player_id}">${esc(p.players.name)}</button>`).join('')}</div></div></div>`;$$('[data-a]').forEach(b=>b.onclick=()=>regGoal(side,scorer,b.dataset.a||null))}
-async function regGoal(side,scorer,assist){let opp=side==='left'?'right':'left',keeper=gk(opp),sec=elapsed(S.active);await sb.from('match_events').insert({match_id:S.active.id,event_type:'goal',side,player_id:scorer,assist_player_id:assist,goalkeeper_id:keeper?.id||null,match_second:sec});let f=side==='left'?'left_score':'right_score',score=Number(S.active[f])+1;await sb.from('matches').update({[f]:score}).eq('id',S.active.id);$('#modal').innerHTML='';await refresh();if(score>=(S.settings?.goals_to_win||2))finish(true)}
+async function regGoal(side,scorer,assist){
+ const opp=side==='left'?'right':'left',keeper=gk(opp),sec=Math.min(S.settings?.match_duration_seconds||420,elapsed(S.active));
+ await sb.from('match_events').insert({match_id:S.active.id,event_type:'goal',side,player_id:scorer,assist_player_id:assist,goalkeeper_id:keeper?.id||null,match_second:sec});
+ const f=side==='left'?'left_score':'right_score',score=Number(S.active[f])+1;
+ await sb.from('matches').update({[f]:score}).eq('id',S.active.id);$('#modal').innerHTML='';await refresh();
+ if(score>=(S.settings?.goals_to_win||2))await markEndPending();
+}
+async function ownGoalFlow(){
+ const ownSide=await chooseSideAction('Quem fez o gol contra?',sideP('left'),sideP('right'),'Escolha o time do jogador que marcou contra o próprio gol.');
+ if(!ownSide)return;
+ const ps=sideP(ownSide),pid=await choosePlayerAction('Quem fez o gol contra?',ps,'Selecione o jogador. O gol será dado ao time adversário, sem assistência.');
+ if(!pid)return;
+ const p=ps.find(x=>x.player_id===pid);if(!p)return;
+ const ok=await confirmAction('Confirmar gol contra?',`${p.players.name} fez gol contra. O ponto será somado ao adversário, sem assistência.`,'OK');if(!ok)return;
+ await regOwnGoal(ownSide,pid);
+}
+async function regOwnGoal(ownSide,playerId){
+ const scoringSide=ownSide==='left'?'right':'left',keeper=gk(ownSide),sec=Math.min(S.settings?.match_duration_seconds||420,elapsed(S.active));
+ await sb.from('match_events').insert({match_id:S.active.id,event_type:'goal',side:scoringSide,player_id:playerId,assist_player_id:null,goalkeeper_id:keeper?.id||null,match_second:sec,metadata:{own_goal:true,own_side:ownSide}});
+ const f=scoringSide==='left'?'left_score':'right_score',score=Number(S.active[f])+1;
+ await sb.from('matches').update({[f]:score}).eq('id',S.active.id);await refresh();
+ if(score>=(S.settings?.goals_to_win||2))await markEndPending();
+}
 async function save(side){let keeper=gk(side);if(!keeper)return alert('Defina o goleiro.');await sb.from('match_events').insert({match_id:S.active.id,event_type:'save',side,player_id:keeper.id,goalkeeper_id:keeper.id,match_second:elapsed(S.active)});refresh()}
 async function toggleTimer(){
  let m=S.active;
