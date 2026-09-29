@@ -171,7 +171,7 @@ function performanceRating(r){
    }
    if(gkSec>=120&&ga===0)add('Sem sofrer gol no período de goleiro',.35);
  }
- const sample=.55+.45*part,rating=clamp(6+(raw-6)*sample,3,10);
+ const sample=.55+.45*part,rating=clamp(6+(raw-6)*sample,0,10);
  return {rating,raw,part,weight:.35+.65*part,parts,savePct:(saves+ga)>0?saves/(saves+ga):null};
 }
 function aggregatePerformance(rows){
@@ -182,7 +182,7 @@ function aggregatePerformance(rows){
  let rw=0,rs=0;recentRows.forEach((x,i)=>{const w=x.weight*Math.pow(.90,i);rw+=w;rs+=x.rating*w});const recent=rw?rs/rw:hist;
  const minutes=rated.reduce((s,x)=>s+Number(x.play_seconds||0),0)/60,matches=rated.length;
  const confidence=clamp((1-Math.exp(-matches/12))*.45+(1-Math.exp(-minutes/120))*.55,0,1);
- const overall=clamp(6+((hist*.70+recent*.30)-6)*(.45+.55*confidence),3,10);
+ const overall=clamp(6+((hist*.70+recent*.30)-6)*(.45+.55*confidence),0,10);
  const formRows=recentRows.slice(0,5),form=formRows.length?formRows.reduce((s,x)=>s+x.rating,0)/formRows.length:hist;
  const totals={matches,minutes,play_seconds:rated.reduce((s,x)=>s+Number(x.play_seconds||0),0),line_seconds:rated.reduce((s,x)=>s+Number(x.line_seconds||0),0),goalkeeper_seconds:rated.reduce((s,x)=>s+Number(x.goalkeeper_seconds||0),0),goals:0,assists:0,saves:0,goals_conceded:0,own_goals:0,penalty_goals:0,penalty_saves:0,wins:0,draws:0,losses:0};
  rated.forEach(x=>{for(const k of ['goals','assists','saves','goals_conceded','own_goals','penalty_goals','penalty_saves'])totals[k]+=Number(x[k]||0);if(!x.winner_side)totals.draws++;else if(x.winner_side===x.side)totals.wins++;else totals.losses++});
