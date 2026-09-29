@@ -193,9 +193,13 @@ async function closePelada(){
  const ok=await confirmAction('Encerrar a pelada?','O dia ficará fechado e protegido contra alterações. Você poderá reabrir depois, se precisar corrigir algo.','Encerrar');
  if(!ok)return;
  if(S.active?.status==='scheduled'){
-   const ids=S.mp.map(x=>x.player_id);
+   const ids=S.mp.map(x=>x.player_id),keepers=S.mp.filter(x=>x.is_goalkeeper);
    await sb.from('matches').update({status:'cancelled',ended_at:new Date().toISOString()}).eq('id',S.active.id);
    if(ids.length)await sb.from('session_players').update({status:'waiting'}).eq('session_id',S.session.id).in('player_id',ids);
+   for(const kp of keepers){
+     const sp=S.sp.find(x=>x.player_id===kp.player_id);
+     if(sp)await sb.from('session_players').update({goalkeeper_turns:Math.max(0,Number(sp.goalkeeper_turns||0)-1)}).eq('id',sp.id);
+   }
  }
  const {data,error}=await sb.from('sessions').update({status:'closed',closed_at:new Date().toISOString()}).eq('id',S.session.id).select().single();
  if(error)return alert(error.message);S.session=data;await refresh(false);S.tab='today';render();
