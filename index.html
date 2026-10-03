@@ -345,11 +345,11 @@ function players(){
  let pm=Object.fromEntries(S.payments.map(x=>[x.player_id,x]));
  $('#content').innerHTML=`<div class="card spread"><div><h3>Jogadores de hoje</h3><div class="muted">Chegada, função e pagamento.</div></div><button id="add" class="btn primary">+ Adicionar</button></div><div class="list" style="margin-top:10px">${S.sp.length?S.sp.map(x=>`<div class="item spread"><div><b>${esc(x.players.name)}</b><div class="muted">${x.status} · ${x.fixed_goalkeeper_active?'🧤 Goleiro fixo hoje':x.players.is_fixed_goalkeeper?'🧤 Goleiro fixo (liberado para linha hoje)':x.players.can_play_goalkeeper?'Pode ir ao gol':'Somente linha'}</div></div><div class="row"><span class="pill">${pm[x.player_id]?.status==='paid'?fmt(pm[x.player_id].amount):pm[x.player_id]?.status||'pendente'}</span><button class="btn ghost" data-card-player="${x.player_id}">Cartão</button><button class="btn ghost" data-edit-player="${x.player_id}">Editar</button>${pm[x.player_id]?.status==='pending'?'<button class="btn primary" data-receive="'+x.player_id+'">Receber</button>':''}${x.status==='left'?'<button class="btn primary" data-return-left="'+x.id+'">↩ Voltar à fila</button>':'<button class="btn red" data-left="'+x.id+'">Sair</button>'}</div></div>`).join(''):'<div class="card empty">Nenhum jogador hoje.</div>'}</div>`;
  $('#add').onclick=addPlayer;
- $('[data-card-player]').forEach(b=>b.onclick=()=>playerCard(b.dataset.cardPlayer));
- $('[data-edit-player]').forEach(b=>b.onclick=()=>editPlayerProfile(b.dataset.editPlayer));
- $('[data-return-left]').forEach(b=>b.onclick=async()=>{const ok=await confirmAction('Voltar jogador à fila?','O mesmo cadastro, pagamento e estatísticas serão preservados.','Voltar');if(!ok)return;await sb.from('session_players').update({status:'waiting',left_at:null,voluntarily_resting:false,consecutive_plays:0}).eq('id',b.dataset.returnLeft);refresh()});
- $('[data-left]').forEach(b=>b.onclick=async()=>{const ok=await confirmAction('Jogador vai embora?','Ele sairá da pelada de hoje, mas continuará cadastrado para outras datas.','OK');if(!ok)return;await sb.from('session_players').update({status:'left',left_at:new Date().toISOString(),voluntarily_resting:false}).eq('id',b.dataset.left);refresh()});
- $('[data-receive]').forEach(b=>b.onclick=()=>receivePayment(b.dataset.receive));
+ $$('[data-card-player]').forEach(b=>b.onclick=()=>playerCard(b.dataset.cardPlayer));
+ $$('[data-edit-player]').forEach(b=>b.onclick=()=>editPlayerProfile(b.dataset.editPlayer));
+ $$('[data-return-left]').forEach(b=>b.onclick=async()=>{const ok=await confirmAction('Voltar jogador à fila?','O mesmo cadastro, pagamento e estatísticas serão preservados.','Voltar');if(!ok)return;await sb.from('session_players').update({status:'waiting',left_at:null,voluntarily_resting:false,consecutive_plays:0}).eq('id',b.dataset.returnLeft);refresh()});
+ $$('[data-left]').forEach(b=>b.onclick=async()=>{const ok=await confirmAction('Jogador vai embora?','Ele sairá da pelada de hoje, mas continuará cadastrado para outras datas.','OK');if(!ok)return;await sb.from('session_players').update({status:'left',left_at:new Date().toISOString(),voluntarily_resting:false}).eq('id',b.dataset.left);refresh()});
+ $$('[data-receive]').forEach(b=>b.onclick=()=>receivePayment(b.dataset.receive));
 }
 function editPlayerProfile(playerId){
  const p=S.players.find(x=>x.id===playerId);if(!p)return;
@@ -1025,7 +1025,7 @@ async function bootJudge(token){
      const waiting=s.waiting_players||[];if(!waiting.length)return alert('Não há ninguém disponível na fila para entrar.');
      const sd=await chooseSideAction('Qual time fará a substituição?',side('left'),side('right'),'Escolha visualmente o time.');
      if(!sd)return;
-     const current=side(sd),outId=await choosePlayerAction('Quem vai sair?',current,'Esse jogador sairá da pelada de hoje após a substituição.');if(!outId)return;
+     const current=side(sd),outId=await choosePlayerAction('Quem vai sair?',current,'Esse jogador voltará para a fila após a substituição.');if(!outId)return;
      const inId=await choosePlayerAction('Quem entra da fila?',waiting,'Escolha o jogador que entrará agora.');if(!inId)return;
      const out=current.find(p=>p.player_id===outId),inn=waiting.find(p=>p.player_id===inId);if(!out||!inn)return;
      let newGkId=null;
@@ -1034,7 +1034,7 @@ async function bootJudge(token){
        if(!choices.length)return alert('Não há outro jogador deste time habilitado para ir ao gol.');
        newGkId=await choosePlayerAction('Quem ficará no gol?',choices,'Apenas jogadores marcados como "pode ir ao gol" aparecem aqui.');if(!newGkId)return;
      }
-     const ok=await confirmAction('Confirmar substituição?',`${out.players.name} sairá da pelada de hoje e ${inn.players.name} entrará agora.${out.is_goalkeeper?' O novo goleiro também será definido.':''}`,'OK');if(!ok)return;
+     const ok=await confirmAction('Confirmar substituição?',`${out.players.name} voltará para a fila e ${inn.players.name} entrará agora.${out.is_goalkeeper?' O novo goleiro também será definido.':''}`,'OK');if(!ok)return;
      await call('substitution',{side:sd,out_player_id:out.player_id,in_player_id:inn.player_id,new_goalkeeper_id:newGkId});draw();
    };
    $('#jg').onclick=async()=>{
