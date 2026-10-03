@@ -343,12 +343,13 @@ async function dailyHighlights(){
 }
 function players(){
  let pm=Object.fromEntries(S.payments.map(x=>[x.player_id,x]));
- $('#content').innerHTML=`<div class="card spread"><div><h3>Jogadores de hoje</h3><div class="muted">Chegada, função e pagamento.</div></div><button id="add" class="btn primary">+ Adicionar</button></div><div class="list" style="margin-top:10px">${S.sp.length?S.sp.map(x=>`<div class="item spread"><div><b>${esc(x.players.name)}</b><div class="muted">${x.status} · ${x.fixed_goalkeeper_active?'🧤 Goleiro fixo hoje':x.players.is_fixed_goalkeeper?'🧤 Goleiro fixo (liberado para linha hoje)':x.players.can_play_goalkeeper?'Pode ir ao gol':'Somente linha'}</div></div><div class="row"><span class="pill">${pm[x.player_id]?.status==='paid'?fmt(pm[x.player_id].amount):pm[x.player_id]?.status||'pendente'}</span><button class="btn ghost" data-card-player="${x.player_id}">Cartão</button><button class="btn ghost" data-edit-player="${x.player_id}">Editar</button>${pm[x.player_id]?.status==='pending'?'<button class="btn primary" data-receive="'+x.player_id+'">Receber</button>':''}${x.status!=='left'?'<button class="btn red" data-left="'+x.id+'">Sair</button>':''}</div></div>`).join(''):'<div class="card empty">Nenhum jogador hoje.</div>'}</div>`;
+ $('#content').innerHTML=`<div class="card spread"><div><h3>Jogadores de hoje</h3><div class="muted">Chegada, função e pagamento.</div></div><button id="add" class="btn primary">+ Adicionar</button></div><div class="list" style="margin-top:10px">${S.sp.length?S.sp.map(x=>`<div class="item spread"><div><b>${esc(x.players.name)}</b><div class="muted">${x.status} · ${x.fixed_goalkeeper_active?'🧤 Goleiro fixo hoje':x.players.is_fixed_goalkeeper?'🧤 Goleiro fixo (liberado para linha hoje)':x.players.can_play_goalkeeper?'Pode ir ao gol':'Somente linha'}</div></div><div class="row"><span class="pill">${pm[x.player_id]?.status==='paid'?fmt(pm[x.player_id].amount):pm[x.player_id]?.status||'pendente'}</span><button class="btn ghost" data-card-player="${x.player_id}">Cartão</button><button class="btn ghost" data-edit-player="${x.player_id}">Editar</button>${pm[x.player_id]?.status==='pending'?'<button class="btn primary" data-receive="'+x.player_id+'">Receber</button>':''}${x.status==='left'?'<button class="btn primary" data-return-left="'+x.id+'">↩ Voltar à fila</button>':'<button class="btn red" data-left="'+x.id+'">Sair</button>'}</div></div>`).join(''):'<div class="card empty">Nenhum jogador hoje.</div>'}</div>`;
  $('#add').onclick=addPlayer;
- $$('[data-card-player]').forEach(b=>b.onclick=()=>playerCard(b.dataset.cardPlayer));
- $$('[data-edit-player]').forEach(b=>b.onclick=()=>editPlayerProfile(b.dataset.editPlayer));
- $$('[data-left]').forEach(b=>b.onclick=async()=>{const ok=await confirmAction('Jogador vai embora?','Ele sairá da pelada de hoje, mas continuará cadastrado para outras datas.','OK');if(!ok)return;await sb.from('session_players').update({status:'left',left_at:new Date().toISOString(),voluntarily_resting:false}).eq('id',b.dataset.left);refresh()});
- $$('[data-receive]').forEach(b=>b.onclick=()=>receivePayment(b.dataset.receive));
+ $('[data-card-player]').forEach(b=>b.onclick=()=>playerCard(b.dataset.cardPlayer));
+ $('[data-edit-player]').forEach(b=>b.onclick=()=>editPlayerProfile(b.dataset.editPlayer));
+ $('[data-return-left]').forEach(b=>b.onclick=async()=>{const ok=await confirmAction('Voltar jogador à fila?','O mesmo cadastro, pagamento e estatísticas serão preservados.','Voltar');if(!ok)return;await sb.from('session_players').update({status:'waiting',left_at:null,voluntarily_resting:false,consecutive_plays:0}).eq('id',b.dataset.returnLeft);refresh()});
+ $('[data-left]').forEach(b=>b.onclick=async()=>{const ok=await confirmAction('Jogador vai embora?','Ele sairá da pelada de hoje, mas continuará cadastrado para outras datas.','OK');if(!ok)return;await sb.from('session_players').update({status:'left',left_at:new Date().toISOString(),voluntarily_resting:false}).eq('id',b.dataset.left);refresh()});
+ $('[data-receive]').forEach(b=>b.onclick=()=>receivePayment(b.dataset.receive));
 }
 function editPlayerProfile(playerId){
  const p=S.players.find(x=>x.id===playerId);if(!p)return;
@@ -375,9 +376,12 @@ async function receivePayment(playerId){
  if(!entry&&amount>0)await sb.from('cash_entries').insert({session_id:S.session.id,owner_id:S.user.id,payment_id:p.id,entry_type:'income',description:'Pagamento - '+(row?.players?.name||'jogador'),amount});
  refresh();
 }
+function normalizePlayerName(name){
+ return String(name||'').normalize('NFD').replace(/[\u0300-\u036f]/g,'').toLowerCase().trim().replace(/\s+/g,' ').replace(/\s+\d+$/,'');
+}
 function addPlayer(){
- let existing=new Set(S.sp.map(x=>x.player_id));
- $('#modal').innerHTML=`<div class="modalBack"><div class="modal"><h3>Adicionar jogador</h3><div class="stack"><div class="field"><label>Jogador cadastrado</label><select id="sel"><option value="">Novo jogador...</option>${S.players.filter(p=>!existing.has(p.id)).map(p=>`<option value="${p.id}">${esc(p.name)}${p.is_fixed_goalkeeper?' · 🧤 fixo':''}</option>`).join('')}</select></div><div class="field"><label>Nome (se novo)</label><input id="newn"></div><label><input type="checkbox" id="cang" checked style="width:auto"> Pode ir ao gol</label><label><input type="checkbox" id="fixedgk" style="width:auto"> 🧤 Goleiro fixo</label><p class="muted">Goleiro fixo permanece no gol nas trocas de times. Marcar esta opção também habilita “pode ir ao gol”.</p><div class="field"><label>Pagamento</label><select id="ps"><option value="paid">Pago</option><option value="pending">Pendente</option><option value="exempt">Isento</option></select></div><div class="field"><label>Valor</label><input id="pv" type="number" value="${S.settings?.default_fee||16}"></div><div class="field"><label>Forma</label><select id="meth"><option>Pix</option><option>Dinheiro</option><option>Outro</option></select></div><button id="savep" class="btn primary">Confirmar chegada</button><button id="close" class="btn ghost">Cancelar</button></div></div></div>`;
+ const activeToday=new Set(S.sp.filter(x=>x.status!=='left').map(x=>x.player_id));
+ $('#modal').innerHTML=`<div class="modalBack"><div class="modal"><h3>Adicionar jogador</h3><div class="stack"><div class="field"><label>Jogador cadastrado</label><select id="sel"><option value="">Novo jogador...</option>${S.players.filter(p=>!activeToday.has(p.id)).map(p=>{const old=S.sp.find(x=>x.player_id===p.id&&x.status==='left');return `<option value="${p.id}">${esc(p.name)}${old?' · ↩ voltar hoje':''}${p.is_fixed_goalkeeper?' · 🧤 fixo':''}</option>`}).join('')}</select></div><div class="field"><label>Nome (se novo)</label><input id="newn"></div><label><input type="checkbox" id="cang" checked style="width:auto"> Pode ir ao gol</label><label><input type="checkbox" id="fixedgk" style="width:auto"> 🧤 Goleiro fixo</label><p class="muted">Se o jogador já participou hoje e saiu, use o cadastro existente: ele volta à fila sem perder números nem gerar nova cobrança.</p><div class="field"><label>Pagamento</label><select id="ps"><option value="paid">Pago</option><option value="pending">Pendente</option><option value="exempt">Isento</option></select></div><div class="field"><label>Valor</label><input id="pv" type="number" value="${S.settings?.default_fee||16}"></div><div class="field"><label>Forma</label><select id="meth"><option>Pix</option><option>Dinheiro</option><option>Outro</option></select></div><button id="savep" class="btn primary">Confirmar chegada</button><button id="close" class="btn ghost">Cancelar</button></div></div></div>`;
  $('#fixedgk').onchange=()=>{if($('#fixedgk').checked)$('#cang').checked=true};
  $('#sel').onchange=()=>{const p=S.players.find(x=>x.id===$('#sel').value);if(p){$('#cang').checked=!!p.can_play_goalkeeper;$('#fixedgk').checked=!!p.is_fixed_goalkeeper}};
  $('#close').onclick=()=>$('#modal').innerHTML='';
@@ -385,15 +389,34 @@ function addPlayer(){
    let pid=$('#sel').value,pdata=S.players.find(x=>x.id===pid)||null;
    if(!pid){
      const name=$('#newn').value.trim();if(!name)return alert('Informe o nome');
-     const fixed=$('#fixedgk').checked,can=fixed||$('#cang').checked;
-     const r=await sb.from('players').insert({owner_id:S.user.id,name,can_play_goalkeeper:can,is_fixed_goalkeeper:fixed}).select().single();
-     if(r.error)return alert(r.error.message);pid=r.data.id;pdata=r.data;
+     const same=S.players.find(p=>normalizePlayerName(p.name)===normalizePlayerName(name));
+     if(same){
+       const sp=S.sp.find(x=>x.player_id===same.id);
+       if(sp&&sp.status!=='left')return alert(`${same.name} já está ativo nesta pelada. Não é necessário cadastrar novamente.`);
+       const ok=await confirmAction('Jogador já cadastrado',`Já existe o cadastro de ${same.name}. Vou reutilizar esse cadastro para preservar histórico e estatísticas.`,'Usar cadastro');
+       if(!ok)return;
+       pid=same.id;pdata=same;
+     }else{
+       const fixed=$('#fixedgk').checked,can=fixed||$('#cang').checked;
+       const r=await sb.from('players').insert({owner_id:S.user.id,name,can_play_goalkeeper:can,is_fixed_goalkeeper:fixed}).select().single();
+       if(r.error)return alert(r.error.message);pid=r.data.id;pdata=r.data;
+     }
+   }
+   const prior=S.sp.find(x=>x.player_id===pid);
+   if(prior){
+     if(prior.status!=='left')return alert('Esse jogador já está ativo hoje.');
+     const ok=await confirmAction('Voltar à fila?',`${pdata?.name||'Jogador'} já participou hoje. Ele voltará usando o mesmo cadastro e sem nova cobrança.`,'Voltar');
+     if(!ok)return;
+     const rr=await sb.from('session_players').update({status:'waiting',left_at:null,voluntarily_resting:false,consecutive_plays:0,fixed_goalkeeper_active:!!pdata?.is_fixed_goalkeeper}).eq('id',prior.id);
+     if(rr.error)return alert(rr.error.message);
+     $('#modal').innerHTML='';return refresh();
    }
    const ps=$('#ps').value,val=ps==='paid'?Number($('#pv').value||0):0;
    const sr=await sb.from('session_players').insert({session_id:S.session.id,player_id:pid,status:'waiting',fixed_goalkeeper_active:!!pdata?.is_fixed_goalkeeper});
    if(sr.error)return alert(sr.error.message);
-   await sb.from('payments').insert({session_id:S.session.id,player_id:pid,status:ps,amount:val,method:$('#meth').value,paid_at:ps==='paid'?new Date().toISOString():null});
-   if(ps==='paid'&&val>0)await sb.from('cash_entries').insert({session_id:S.session.id,owner_id:S.user.id,entry_type:'income',description:'Pagamento de jogador',amount:val});
+   const pay=await sb.from('payments').insert({session_id:S.session.id,player_id:pid,status:ps,amount:val,method:$('#meth').value,paid_at:ps==='paid'?new Date().toISOString():null}).select().single();
+   if(pay.error)return alert(pay.error.message);
+   if(ps==='paid'&&val>0)await sb.from('cash_entries').insert({session_id:S.session.id,owner_id:S.user.id,payment_id:pay.data.id,entry_type:'income',description:'Pagamento - '+(pdata?.name||'jogador'),amount:val});
    $('#modal').innerHTML='';refresh();
  };
 }
@@ -629,7 +652,7 @@ async function midMatchSubstitution(){
  const side=await chooseSideAction('Qual time fará a substituição?',sideP('left'),sideP('right'),'Escolha visualmente o time.');
  if(!side)return;
  const current=sideP(side);
- const outId=await choosePlayerAction('Quem vai sair?',current,'Esse jogador sairá da pelada de hoje após a substituição.');
+ const outId=await choosePlayerAction('Quem vai sair?',current,'Esse jogador voltará para a fila após a substituição.');
  if(!outId)return;
  const innId=await choosePlayerAction('Quem entra da fila?',waiting,'Escolha o jogador que entrará agora.');
  if(!innId)return;
@@ -643,7 +666,7 @@ async function midMatchSubstitution(){
    newGkId=await choosePlayerAction('Quem ficará no gol?',choices,'O jogador que está saindo é o goleiro. Escolha o novo goleiro antes de confirmar.');
    if(!newGkId)return;
  }
- const ok=await confirmAction('Confirmar substituição?',`${out.players.name} sairá da pelada de hoje e ${inn.players.name} entrará faltando ${tsec(Math.max(0,(S.settings?.match_duration_seconds||420)-sec))}.${out.is_goalkeeper?' O novo goleiro também será definido.':''}`,'OK');
+ const ok=await confirmAction('Confirmar substituição?',`${out.players.name} voltará para a fila e ${inn.players.name} entrará faltando ${tsec(Math.max(0,(S.settings?.match_duration_seconds||420)-sec))}.${out.is_goalkeeper?' O novo goleiro também será definido.':''}`,'OK');
  if(!ok)return;
  const now=new Date().toISOString();
  if(out.is_goalkeeper){
@@ -653,7 +676,7 @@ async function midMatchSubstitution(){
  const ins=await sb.from('match_players').insert({match_id:S.active.id,player_id:inn.player_id,side,entered_at:now,entered_second:sec,is_goalkeeper:false}).select().single();
  if(ins.error)return alert(ins.error.message);
  const innSp=S.sp.find(x=>x.player_id===inn.player_id),outSp=S.sp.find(x=>x.player_id===out.player_id);
- if(outSp)await sb.from('session_players').update({status:'left',left_at:now,voluntarily_resting:false}).eq('id',outSp.id);
+ if(outSp)await sb.from('session_players').update({status:'waiting',left_at:null,voluntarily_resting:false,consecutive_plays:0,consecutive_waits:0}).eq('id',outSp.id);
  if(innSp)await sb.from('session_players').update({
    status:'playing',voluntarily_resting:false,left_at:null,
    waiting_seconds:Number(innSp.waiting_seconds||0)+sec,consecutive_waits:0
@@ -667,7 +690,7 @@ async function midMatchSubstitution(){
  }
  await sb.from('match_events').insert({
    match_id:S.active.id,event_type:'player_in',side,player_id:inn.player_id,match_second:sec,
-   metadata:{substitution:true,replaced_player_id:out.player_id,out_was_goalkeeper:!!out.is_goalkeeper,new_goalkeeper_id:newGkId||null,incoming_waiting_before:Number(innSp?.waiting_seconds||0)}
+   metadata:{substitution:true,replaced_player_id:out.player_id,out_was_goalkeeper:!!out.is_goalkeeper,new_goalkeeper_id:newGkId||null,incoming_waiting_before:Number(innSp?.waiting_seconds||0),out_destination:'waiting'}
  });
  await refresh();
 }
@@ -756,6 +779,8 @@ async function endPens(){if(S.active.left_penalty_score===S.active.right_penalty
 async function finalize(win,dur,both){
  const m=S.active,roster=[...S.mp],sessionRows=[...S.sp],waitingBefore=sessionRows.filter(x=>x.status==='waiting').sort((a,b)=>b.waiting_seconds-a.waiting_seconds||a.play_seconds-b.play_seconds||b.consecutive_waits-a.consecutive_waits||new Date(a.arrived_at)-new Date(b.arrived_at));
  const finalRoster=roster.filter(x=>!x.exited_at),now=new Date().toISOString();
+ const returnedSubs=(S.events||[]).filter(e=>!e.voided&&e.metadata?.substitution&&e.metadata?.out_destination==='waiting'),returnedIds=new Set(returnedSubs.map(e=>e.metadata?.replaced_player_id).filter(Boolean));
+ const keeperAtEnd={left:finalRoster.find(x=>x.side==='left'&&x.is_goalkeeper)?.player_id||null,right:finalRoster.find(x=>x.side==='right'&&x.is_goalkeeper)?.player_id||null};
  const spOf=id=>sessionRows.find(x=>x.player_id===id),fixedActive=p=>!!spOf(p.player_id)?.fixed_goalkeeper_active&&spOf(p.player_id)?.status!=='left';
  const protectedFixed=finalRoster.filter(fixedActive),protectedIds=new Set(protectedFixed.map(x=>x.player_id));
  const leftIds=finalRoster.filter(x=>x.side==='left').map(x=>x.player_id),rightIds=finalRoster.filter(x=>x.side==='right').map(x=>x.player_id);
@@ -776,8 +801,11 @@ async function finalize(win,dur,both){
        play_seconds:Number(sp.play_seconds||0)+played,line_seconds:Number(sp.line_seconds||0)+ls,goalkeeper_seconds:Number(sp.goalkeeper_seconds||0)+gs,
        games_played:Number(sp.games_played||0)+(played>0?1:0)
      };
-     if(sp.status==='left'||!activeAtEnd){
+     if(sp.status==='left'){
        patch.status='left';patch.left_at=sp.left_at||p.exited_at||now;
+     }else if(!activeAtEnd){
+       if(returnedIds.has(p.player_id)){patch.status='waiting';patch.left_at=null;patch.consecutive_plays=0;patch.consecutive_waits=0}
+       else{patch.status='left';patch.left_at=sp.left_at||p.exited_at||now}
      }else{
        const staysFixed=protectedIds.has(p.player_id),staysResult=!both&&p.side===win;
        patch.status=(staysFixed||staysResult)?'playing':'waiting';
@@ -789,6 +817,11 @@ async function finalize(win,dur,both){
  }
  for(const sp of waitingBefore){
    await sb.from('session_players').update({waiting_seconds:Number(sp.waiting_seconds||0)+dur,games_waited:Number(sp.games_waited||0)+1,consecutive_waits:Number(sp.consecutive_waits||0)+1,consecutive_plays:0}).eq('id',sp.id);
+ }
+ for(const e of returnedSubs){
+   const sp=spOf(e.metadata?.replaced_player_id);if(!sp||sp.status==='left')continue;
+   const extra=Math.max(0,dur-Number(e.match_second||0));
+   await sb.from('session_players').update({waiting_seconds:Number(sp.waiting_seconds||0)+extra}).eq('id',sp.id);
  }
  const n=S.settings?.players_per_team||6;
  const takeWaiting=(pool,slots,alreadyHasFixed)=>{
@@ -827,20 +860,20 @@ async function finalize(win,dur,both){
    }
    if(winnerIds.length===n&&incoming.length===slots){
      const opponent=[...loserFixed,...incoming],reusedIds=incoming.filter(id=>loserIds.includes(id));
-     if(win==='left')await createNext(winnerIds,opponent,reusedIds);else await createNext(opponent,winnerIds,reusedIds);
+     if(win==='left')await createNext(winnerIds,opponent,reusedIds,{left:keeperAtEnd.left});else await createNext(opponent,winnerIds,reusedIds,{right:keeperAtEnd.right});
    }
  }
  await refresh();S.tab='queue';render();
 }
-async function createNext(left,right,reusedIds=[]){
+async function createNext(left,right,reusedIds=[],preferredKeepers={}){
  const seq=Math.max(0,...S.matches.map(x=>x.sequence_no))+1,r=await sb.from('matches').insert({session_id:S.session.id,sequence_no:seq,status:'scheduled'}).select().single();
  if(r.error)return alert(r.error.message);const m=r.data,reused=new Set(reusedIds);
  await sb.from('match_players').insert([...left.map(id=>({match_id:m.id,player_id:id,side:'left',reused_from_loser:reused.has(id)})),...right.map(id=>({match_id:m.id,player_id:id,side:'right',reused_from_loser:reused.has(id)}))]);
  await sb.from('session_players').update({status:'playing'}).in('player_id',[...left,...right]).eq('session_id',S.session.id);
  const {data:rows}=await sb.from('session_players').select('*,players(*)').eq('session_id',S.session.id);
  for(const side of ['left','right']){
-   const ids=side==='left'?left:right,team=(rows||[]).filter(x=>ids.includes(x.player_id));
-   const g=team.find(x=>x.fixed_goalkeeper_active)||team.filter(x=>x.players.can_play_goalkeeper).sort((a,b)=>Number(a.goalkeeper_turns||0)-Number(b.goalkeeper_turns||0)||Number(a.goalkeeper_seconds||0)-Number(b.goalkeeper_seconds||0)||new Date(a.arrived_at)-new Date(b.arrived_at))[0];
+   const ids=side==='left'?left:right,team=(rows||[]).filter(x=>ids.includes(x.player_id)),preferred=team.find(x=>x.player_id===preferredKeepers?.[side]&&x.players?.can_play_goalkeeper);
+   const g=preferred||team.find(x=>x.fixed_goalkeeper_active)||team.filter(x=>x.players.can_play_goalkeeper).sort((a,b)=>Number(a.goalkeeper_turns||0)-Number(b.goalkeeper_turns||0)||Number(a.goalkeeper_seconds||0)-Number(b.goalkeeper_seconds||0)||new Date(a.arrived_at)-new Date(b.arrived_at))[0];
    if(g){
      await sb.from('match_players').update({is_goalkeeper:true}).eq('match_id',m.id).eq('player_id',g.player_id);
      await sb.from('session_players').update({goalkeeper_turns:Number(g.goalkeeper_turns||0)+1}).eq('id',g.id);
